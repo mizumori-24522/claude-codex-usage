@@ -364,7 +364,11 @@ final class UsageStore: ObservableObject {
         for p in Settings.shared.activeProviders { refresh(p, manual: manual) }
     }
 
+    /// `--offline`: show the cached numbers without contacting any service (used for screenshots).
+    static var offline = false
+
     private func refresh(_ p: Provider, manual: Bool = false) {
+        guard !Self.offline else { return }
         guard !self[p].loading else { return }
         // Even a manual refresh waits out a "slow down" from the server; retrying early only extends it.
         if let until = rateLimitedUntil[p], until > Date() { return }

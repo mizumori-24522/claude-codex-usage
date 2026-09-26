@@ -665,6 +665,7 @@ enum Main {
         if args.count >= 3, args[1] == "--icon" { DevTools.renderIconset(to: args[2]); return }
         if args.count >= 3, args[1] == "--render" { DevTools.renderPreviews(to: args[2]); return }
         if args.count >= 2, args[1] == "--dump" { DevTools.dump(); return }
+        if args.contains("--offline") { UsageStore.offline = true }
         if args.count >= 2, args[1] == "--test-cli" { DevTools.testCLIRefresh(); return }
         if args.count >= 3, args[1] == "--menubar" { DevTools.renderMenuBarStyles(to: args[2]); return }
         if args.count >= 3, args[1] == "--character" { DevTools.renderCharacter(to: args[2]); return }

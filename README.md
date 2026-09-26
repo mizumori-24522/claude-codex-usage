@@ -9,6 +9,20 @@ Claude と Codex の使用量（5時間制限・週間制限）を、Mac のデ�
 
 ![Claude と Codex のウィジェット](docs/reset-tiles.png)
 
+## メニューバーから開く画面
+
+メニューバーのキャラクターをクリックすると、Claude と Codex の詳細と設定が開きます。
+
+<img src="docs/menu.png" width="340" alt="メニューを開いたところ">
+
+## ウィジェットのスタイル
+
+右クリック →「スタイル」で切り替えられます（画像は「中」サイズ・Claude と Codex 両方の表示）。
+
+| ガラス | クリアガラス | ダーク |
+|:---:|:---:|:---:|
+| ![ガラス](docs/style-regular.png) | ![クリアガラス](docs/style-clear.png) | ![ダーク](docs/style-dark.png) |
+
 ## 動作環境
 
 | 必要なもの | 内容 |
