@@ -56,6 +56,9 @@ enum Palette {
             case (.codex, .weekly): return sky
             }
         }
+        if provider == .claude {
+            return CharacterScale.ramp(CharacterScale.hex(forUsed: used, in: CharacterScale.current))
+        }
         switch level {
         case .plenty: return sky
         case .calm: return green
@@ -185,13 +188,22 @@ struct ProviderState: Identifiable {
 
 // MARK: - Building blocks
 
+extension Color {
+    /// Keeps a near-white step visible on light backgrounds (see `CharacterScale.legible`).
+    func legible(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? self : Color(nsColor: CharacterScale.legible(NSColor(self), onDark: false))
+    }
+}
+
 struct RingGauge: View {
     var progress: Double
     var lineWidth: CGFloat
     var colors: [Color]
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let p = min(max(progress, 0), 1)
+        let colors = self.colors.map { $0.legible(scheme) }
         ZStack {
             Circle()
                 .stroke(colors[1].opacity(0.16), lineWidth: lineWidth)
@@ -500,8 +512,10 @@ struct BarView: View {
     var fraction: Double
     var colors: [Color]
     var height: CGFloat = 6
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let colors = self.colors.map { $0.legible(scheme) }
         GeometryReader { g in
             ZStack(alignment: .leading) {
                 Capsule().fill(colors[1].opacity(0.16))
@@ -518,9 +532,10 @@ struct BarView: View {
 struct Legend: View {
     var color: Color
     var text: String
+    @Environment(\.colorScheme) private var scheme
     var body: some View {
         HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 6, height: 6)
+            Circle().fill(color.legible(scheme)).frame(width: 6, height: 6)
             Text(text).lineLimit(1)
         }
     }

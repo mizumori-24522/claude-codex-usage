@@ -216,6 +216,8 @@ enum StatusIcon {
     }
 
     private static func arc(_ c: NSPoint, radius: CGFloat, fraction: Double, color: NSColor, dimmed: Bool) {
+        let onDark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let color = CharacterScale.legible(color, onDark: onDark)
         let track = NSBezierPath()
         track.appendArc(withCenter: c, radius: radius, startAngle: 0, endAngle: 360)
         track.lineWidth = 2.3
@@ -357,6 +359,8 @@ enum StatusIcon {
         let rows = clawd.count, legRows = 2
         let bodyBottom = o.y + CGFloat(legRows) * cell
         let fillTop = bodyBottom + CGFloat(rows - legRows) * cell * CGFloat(min(max(fraction, 0), 1))
+        let onDark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let color = CharacterScale.legible(color, onDark: onDark)
         let solid = color.withAlphaComponent(dimmed ? 0.45 : 1)
         let faint = dimmed ? NSColor.labelColor.withAlphaComponent(0.18) : color.withAlphaComponent(0.3)
         for (r, line) in clawd.enumerated() {
@@ -413,11 +417,12 @@ enum StatusIcon {
         }
     }
 
+    @MainActor
     static func characterTint(_ m: Metric, _ option: CharacterColor) -> NSColor {
         if option == .claude {
             return NSColor(m.level == .critical ? Palette.red[1] : Palette.claudeAccent)
         }
-        return NSColor(Palette.ramp(provider: .claude, kind: .session, used: m.used, mode: .level)[1])
+        return CharacterScale.nsColor(CharacterScale.hex(forUsed: m.used, in: Settings.shared.characterSteps))
     }
 
     /// Builds the status item image for the chosen style.
@@ -495,7 +500,7 @@ final class StatusController: NSObject, NSPopoverDelegate {
                                                                raiseWidget: { [weak widget] in widget?.raise() }))
         panel.sizingOptions = [.preferredContentSize]
         popover.contentViewController = panel
-        popover.behavior = .transient
+        popover.behavior = .semitransient
         popover.animates = true
         popover.delegate = self
 

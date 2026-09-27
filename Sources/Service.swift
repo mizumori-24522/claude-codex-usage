@@ -455,7 +455,7 @@ enum MenuBarMode: String, CaseIterable { case character, characterNumbers, iconO
     var isCharacter: Bool { self == .character || self == .characterNumbers }
 }
 enum CharacterColor: String, CaseIterable { case level, claude
-    var label: String { self == .level ? "使用率で変化（水色 → 緑 → 紫 → 黄 → 橙 → 赤）" : "Claude オレンジ（90% 以上で赤）" }
+    var label: String { self == .level ? "使用率で変化（色の段階は設定で編集）" : "Claude オレンジ（90% 以上で赤）" }
 }
 enum ProviderSelection: String, CaseIterable { case claude, codex, both
     var label: String { ["claude": "Claude のみ", "codex": "Codex のみ", "both": "Claude と Codex"][rawValue]! }
@@ -480,6 +480,13 @@ final class Settings: ObservableObject {
     @Published var showWorkScene: Bool     { didSet { d.set(showWorkScene, forKey: "showWorkScene") } }
     /// The weekly breakdown and credits change rarely, so the widget leaves them to the panel by default.
     @Published var showWidgetDetails: Bool { didSet { d.set(showWidgetDetails, forKey: "showWidgetDetails") } }
+    /// The Claude character's colour steps (editable in the panel).
+    @Published var characterSteps: [CharacterStep] {
+        didSet {
+            d.set(try? JSONEncoder().encode(characterSteps), forKey: "characterSteps")
+            CharacterScale.current = characterSteps
+        }
+    }
     @Published var widgetSize: WidgetSize  { didSet { d.set(widgetSize.rawValue, forKey: "widgetSize") } }
     @Published var placement: Placement    { didSet { d.set(placement.rawValue, forKey: "placement") } }
     @Published var displayMode: DisplayMode { didSet { d.set(displayMode.rawValue, forKey: "displayMode") } }
@@ -509,6 +516,10 @@ final class Settings: ObservableObject {
         showWidget = d.bool(forKey: "showWidget")
         showWorkScene = d.bool(forKey: "showWorkScene")
         showWidgetDetails = d.bool(forKey: "showWidgetDetails")
+        let steps = d.data(forKey: "characterSteps").flatMap { try? JSONDecoder().decode([CharacterStep].self, from: $0) }
+            ?? CharacterScale.defaults
+        characterSteps = steps
+        CharacterScale.current = steps
         widgetSize = WidgetSize(rawValue: d.string(forKey: "widgetSize") ?? "") ?? .medium
         placement = Placement(rawValue: d.string(forKey: "placement") ?? "") ?? .desktop
         displayMode = DisplayMode(rawValue: d.string(forKey: "displayMode") ?? "") ?? .used

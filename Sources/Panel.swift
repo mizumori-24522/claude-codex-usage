@@ -34,7 +34,12 @@ struct ControlPanel: View {
 
             switch state.tab {
             case .usage: UsageTab(store: store, settings: settings)
-            case .settings: SettingsTab(settings: settings, raiseWidget: raiseWidget)
+            case .settings:
+                // The settings list is long; scroll inside a fixed-height area so the panel stays on screen.
+                ScrollView(.vertical) {
+                    SettingsTab(settings: settings, raiseWidget: raiseWidget)
+                }
+                .frame(height: 560)
             }
 
             Divider()
@@ -148,6 +153,7 @@ private struct SettingsTab: View {
                         Text("使用率で変化").tag(CharacterColor.level); Text("オレンジ").tag(CharacterColor.claude)
                     }.segmented()
                 }
+                if settings.characterColor == .level { CharacterScaleEditor(settings: settings) }
                 Row("Claude だけ表示") {
                     Toggle("", isOn: $settings.menuBarClaudeOnly).switchStyle()
                         .disabled(settings.menuBarMode.isCharacter)
@@ -181,6 +187,65 @@ private struct SettingsTab: View {
             loginError = "変更できませんでした。システム設定 › 一般 › ログイン項目 から追加してください。"
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+}
+
+/// Edit the Claude character's colour steps: colour, and the upper bound of each step.
+private struct CharacterScaleEditor: View {
+    @ObservedObject var settings: Settings
+
+    var body: some View {
+        let steps = settings.characterSteps.sorted { $0.upTo < $1.upTo }
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Claude の色の段階（キャラクター・5時間・週間のリング）")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.secondary)
+            ForEach(Array(steps.enumerated()), id: \.element.id) { i, step in
+                let lower = i == 0 ? 0 : steps[i - 1].upTo + 1
+                let upper = i + 1 < steps.count ? steps[i + 1].upTo - 1 : 100
+                HStack(spacing: 8) {
+                    ColorPicker("", selection: colorBinding(step.id), supportsOpacity: false)
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .frame(width: 30)
+                    Text(i == steps.count - 1 ? "使用 \(lower)% 〜" : "使用 \(lower) 〜 \(step.upTo)%")
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                    Text("残り \(100 - (i == steps.count - 1 ? 100 : step.upTo))〜\(100 - lower)%")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                    Spacer(minLength: 4)
+                    if i < steps.count - 1 {
+                        Stepper("", value: upToBinding(step.id), in: lower...max(lower, upper), step: 1)
+                            .labelsHidden()
+                            .controlSize(.mini)
+                    }
+                }
+            }
+            Button("初期値に戻す") { settings.characterSteps = CharacterScale.defaults }
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.primary.opacity(0.04)))
+    }
+
+    private func colorBinding(_ id: UUID) -> Binding<Color> {
+        Binding(get: {
+            Color(nsColor: CharacterScale.nsColor(settings.characterSteps.first { $0.id == id }?.hex ?? 0xD97757))
+        }, set: { color in
+            guard let i = settings.characterSteps.firstIndex(where: { $0.id == id }) else { return }
+            settings.characterSteps[i].hex = CharacterScale.hex(of: color)
+        })
+    }
+
+    private func upToBinding(_ id: UUID) -> Binding<Int> {
+        Binding(get: { settings.characterSteps.first { $0.id == id }?.upTo ?? 0 },
+                set: { value in
+                    guard let i = settings.characterSteps.firstIndex(where: { $0.id == id }) else { return }
+                    settings.characterSteps[i].upTo = value
+                })
     }
 }
 
