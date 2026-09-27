@@ -7,6 +7,8 @@ Claude と Codex の使用量（5時間制限・週間制限）を、Mac のデ�
 
 > **非公式アプリです。** Anthropic・OpenAI とは関係ありません。「Claude」「Codex」の名称とキャラクターは各社の商標・著作物です。
 
+> 🔰 **このアプリができるまで**：AI への指示の出し方や、Claude と Codex を連携させた方法を [制作記録（docs/making-of.md）](docs/making-of.md) にまとめています。
+
 ![Claude と Codex のウィジェット](docs/reset-tiles.png)
 
 ## パネル（使用量と設定）
