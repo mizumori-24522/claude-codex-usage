@@ -259,6 +259,20 @@ enum DevTools {
                 .frame(width: 344).padding(12).background(Color(hex: 0x22242A)).environment(\.colorScheme, .dark)
             write(view, scale: 2, to: url.appendingPathComponent("phase-\(index).png"))
         }
+        // Both work scene styles, in each phase, for comparison.
+        let styles = VStack(spacing: 0) {
+            ForEach(WorkSceneStyle.allCases, id: \.self) { style in
+                HStack(spacing: 0) {
+                    ForEach([WorkPhase.working, .waiting, .finished, .idle], id: \.self) { phase in
+                        WorkSceneFooter(providers: [.claude], states: [.claude: activity(phase, since: now)], style: style,
+                                        previewDate: now.addingTimeInterval(phase == .finished ? 0.45 : 0.4))
+                            .frame(width: 150)
+                    }
+                }
+            }
+        }
+        .padding(12).background(Color(hex: 0x22242A)).environment(\.colorScheme, .dark)
+        write(styles, scale: 2, to: url.appendingPathComponent("styles.png"))
         // Claude's colour follows its 5-hour level (remaining 95 / 70 / 50 / 33 / 18 / 5 %).
         let levels = HStack(spacing: 0) {
             ForEach([5.0, 30, 50, 67, 82, 95], id: \.self) { used in

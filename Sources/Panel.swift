@@ -111,6 +111,13 @@ private struct SettingsTab: View {
                     }.segmented()
                 }
                 Row("作業風景") { Toggle("", isOn: $settings.showWorkScene).switchStyle() }
+                if settings.showWorkScene {
+                    Row("作業風景の動き") {
+                        Picker("", selection: $settings.workSceneStyle) {
+                            ForEach(WorkSceneStyle.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }.segmented()
+                    }
+                }
                 Row("内訳・クレジット") { Toggle("", isOn: $settings.showWidgetDetails).switchStyle() }
                 if settings.showWidget && settings.placement == .desktop {
                     Button("ウィジェットを手前に出す", action: raiseWidget)

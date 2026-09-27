@@ -857,7 +857,8 @@ struct WidgetRoot: View {
     var body: some View {
         WidgetContents(items: store.states(settings), size: settings.widgetSize,
                        workStates: settings.showWorkScene ? activity.states : nil,
-                       characterColor: settings.characterColor, showDetails: settings.showWidgetDetails)
+                       characterColor: settings.characterColor, showDetails: settings.showWidgetDetails,
+                       sceneStyle: settings.workSceneStyle)
     }
 }
 
@@ -868,6 +869,7 @@ struct WidgetContents: View {
     var workStates: [Provider: WorkActivity]?
     var characterColor: CharacterColor = .level
     var showDetails = false
+    var sceneStyle: WorkSceneStyle = .desk
     var previewDate: Date? = nil
 
     private var tints: [Provider: CharacterTint] {
@@ -882,11 +884,11 @@ struct WidgetContents: View {
             if let workStates {
                 if size == .large {
                     WorkSceneFooter(providers: items.map(\.provider), states: workStates, tints: tints,
-                                    previewDate: previewDate)
+                                    style: sceneStyle, previewDate: previewDate)
                         .frame(width: 344).magnified(WidgetSize.largeScale)
                 } else {
                     WorkSceneFooter(providers: items.map(\.provider), states: workStates, tints: tints,
-                                    compact: size == .small, previewDate: previewDate)
+                                    style: sceneStyle, compact: size == .small, previewDate: previewDate)
                 }
             }
         }

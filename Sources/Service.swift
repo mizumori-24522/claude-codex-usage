@@ -454,6 +454,9 @@ enum MenuBarMode: String, CaseIterable { case character, characterNumbers, iconO
     /// The pixel mascot is Claude's, so these styles always show Claude.
     var isCharacter: Bool { self == .character || self == .characterNumbers }
 }
+enum WorkSceneStyle: String, CaseIterable { case desk, laptop
+    var label: String { self == .desk ? "片手で入力" : "ノートPC" }
+}
 enum CharacterColor: String, CaseIterable { case level, claude
     var label: String { self == .level ? "使用率で変化（色の段階は設定で編集）" : "Claude オレンジ（90% 以上で赤）" }
 }
@@ -480,6 +483,7 @@ final class Settings: ObservableObject {
     @Published var showWorkScene: Bool     { didSet { d.set(showWorkScene, forKey: "showWorkScene") } }
     /// The weekly breakdown and credits change rarely, so the widget leaves them to the panel by default.
     @Published var showWidgetDetails: Bool { didSet { d.set(showWidgetDetails, forKey: "showWidgetDetails") } }
+    @Published var workSceneStyle: WorkSceneStyle { didSet { d.set(workSceneStyle.rawValue, forKey: "workSceneStyle") } }
     /// The Claude character's colour steps (editable in the panel).
     @Published var characterSteps: [CharacterStep] {
         didSet {
@@ -516,6 +520,7 @@ final class Settings: ObservableObject {
         showWidget = d.bool(forKey: "showWidget")
         showWorkScene = d.bool(forKey: "showWorkScene")
         showWidgetDetails = d.bool(forKey: "showWidgetDetails")
+        workSceneStyle = WorkSceneStyle(rawValue: d.string(forKey: "workSceneStyle") ?? "") ?? .desk
         let steps = d.data(forKey: "characterSteps").flatMap { try? JSONDecoder().decode([CharacterStep].self, from: $0) }
             ?? CharacterScale.defaults
         characterSteps = steps

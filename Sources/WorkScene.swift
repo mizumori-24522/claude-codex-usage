@@ -35,6 +35,7 @@ struct WorkSceneFooter: View {
     var providers: [Provider]
     var states: [Provider: WorkActivity]
     var tints: [Provider: CharacterTint] = [:]
+    var style: WorkSceneStyle = .desk
     var compact = false
     /// A fixed clock for image/GIF previews; never used to manufacture live activity.
     var previewDate: Date? = nil
@@ -48,7 +49,7 @@ struct WorkSceneFooter: View {
                                   activity: states[provider] ?? WorkActivity(phase: .unknown, sessionCount: 0,
                                                                            detail: "作業状態をまだ検出していません", changedAt: .distantPast),
                                   tint: tints[provider] ?? (provider == .claude ? CharacterTint(Palette.claude) : .codex),
-                                  compact: compact, previewDate: previewDate)
+                                  style: style, compact: compact, previewDate: previewDate)
                     .frame(maxWidth: .infinity)
                 }
             }
@@ -64,6 +65,7 @@ private struct WorkSceneTile: View {
     var provider: Provider
     var activity: WorkActivity
     var tint: CharacterTint
+    var style: WorkSceneStyle
     var compact: Bool
     var previewDate: Date?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -130,9 +132,16 @@ private struct WorkSceneTile: View {
         .help(activity.detail)
     }
 
-    private func scene(at date: Date) -> some View {
-        PixelWorkbench(provider: provider, phase: activity.phase, tint: tint, date: date,
-                       changedAt: activity.changedAt, reduceMotion: reduceMotion)
+    @ViewBuilder private func scene(at date: Date) -> some View {
+        Group {
+            if style == .laptop {
+                LaptopWorkbench(provider: provider, phase: activity.phase, tint: tint, date: date,
+                                changedAt: activity.changedAt, reduceMotion: reduceMotion)
+            } else {
+                PixelWorkbench(provider: provider, phase: activity.phase, tint: tint, date: date,
+                               changedAt: activity.changedAt, reduceMotion: reduceMotion)
+            }
+        }
             .frame(height: compact ? 36 : 60)
             .accessibilityHidden(true)
     }
@@ -253,6 +262,17 @@ struct PixelWorkbench: View {
             pixel(19, 18, 16, 1, desk)
             pixel(22, 18, 9, 0.5, .primary.opacity(0.18))
 
+            // While working the screen breathes softly and spills a little light (from the laptop scene).
+            if working {
+                let glow = reduceMotion ? 1.0 : 0.5 + 0.5 * sin(time * 2 * .pi / 1.6)
+                let light = tint.light
+                pixel(23, 9, 9, 7, light.opacity(0.10 + 0.14 * glow))
+                pixel(22, 7.5, 11, 0.5, light.opacity(0.22 * glow))
+                pixel(21.5, 8, 0.5, 9, light.opacity(0.16 * glow))
+                pixel(33, 8, 0.5, 9, light.opacity(0.16 * glow))
+                pixel(22, 17, 11, 0.5, light.opacity(0.24 * glow))
+            }
+
             let code = accent.opacity(working ? 0.85 : 0.36)
             if phase == .finished {
                 pixel(26, 12, 1, 1, accent)
@@ -304,6 +324,151 @@ struct PixelWorkbench: View {
             if phase == .finished && hop > 0 {
                 pixel(6, 8, 1, 1, accent.opacity(0.65))
                 pixel(14, 7, 1, 1, accent.opacity(0.65))
+            }
+        }
+    }
+}
+
+/// The alternative scene: side-on at a laptop on a low desk, tapping calmly while the screen
+/// glows. Same 36 × 24 grid as the desk scene so both fit the same space.
+struct LaptopWorkbench: View {
+    var provider: Provider
+    var phase: WorkPhase
+    var tint: CharacterTint
+    var date: Date
+    var changedAt: Date
+    var reduceMotion: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    // '#' body, 'S' shade (the far side, turned away), 'o' eye/face, 'A' the typing arm.
+    private static let claudeFront = [
+        "..############..", "..############..", "..##o######o##..", "..##o######o##..",
+        "################", "################", "..############..", "..############..",
+        "...#.#....#.#...", "...#.#....#.#..."
+    ]
+    private static let claudeSide = [
+        "...##########SS.", "...##########SS.", "...#o###o####SS.", "...#o###o####SS.",
+        ".AA##########SS.", ".AA##########SS.", "...##########SS.", "...##########SS.",
+        "....#.#..#.#.S..", "....#.#..#.#.S.."
+    ]
+    private static let codexFront = [
+        "..############..", ".##############.", ".##oooooooooo##.", ".##oooooooooo##.",
+        ".##oooooooooo##.", ".##############.", "################", "..############..",
+        "...##......##...", "...##......##..."
+    ]
+    private static let codexSide = [
+        "...##########SS.", "..###########SS.", "..#ooooooo###SS.", "..#ooooooo###SS.",
+        "..#ooooooo###SS.", ".AA##########SS.", "..###########SS.", "...##########SS.",
+        "....##...##.S...", "....##...##.S..."
+    ]
+    private static let spriteX: CGFloat = 18, spriteY: CGFloat = 13
+    private static let deskY: CGFloat = 20, keyboardY: CGFloat = 19
+
+    var body: some View {
+        Canvas { context, size in
+            let unit = max(0.5, (min(size.width / 36, size.height / 24) * 2).rounded(.down) / 2)
+            let origin = CGPoint(x: ((size.width - 36 * unit) / 2 * 2).rounded() / 2, y: size.height - 24 * unit)
+            let dark = colorScheme == .dark
+            let time = date.timeIntervalSinceReferenceDate
+            let beat = reduceMotion ? 0 : Int(floor(time / PixelWorkbench.keystroke))
+            let elapsed = date.timeIntervalSince(changedAt)
+
+            func pixel(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat = 1, _ h: CGFloat = 1, _ color: Color) {
+                let rect = CGRect(x: origin.x + x * unit, y: origin.y + y * unit, width: w * unit, height: h * unit)
+                context.fill(Path(rect), with: .color(color), style: FillStyle(antialiased: false))
+            }
+
+            let unknown = phase == .unknown
+            let body = unknown ? Color.secondary.opacity(0.45) : Color(nsColor: CharacterScale.legible(NSColor(tint.body), onDark: dark))
+            let shade = unknown ? Color.secondary.opacity(0.35) : Color(nsColor: CharacterScale.legible(NSColor(tint.shade), onDark: dark))
+            let eye = Color(hex: 0x25201E)
+            let wood = dark ? Color(hex: 0x6B5A4B) : Color(hex: 0xB89878)
+            let woodEdge = dark ? Color(hex: 0x54463A) : Color(hex: 0x9C7C5E)
+            let laptop = dark ? Color(hex: 0x9AA1AD) : Color(hex: 0x7D8491)
+            let laptopEdge = dark ? Color(hex: 0x767D89) : Color(hex: 0x626874)
+
+            let typing = phase == .working
+            let pressing = typing && !reduceMotion
+            let glow = reduceMotion ? 1.0 : 0.75 + 0.25 * sin(time * 2 * .pi / 1.6)
+
+            // Floor and low desk.
+            pixel(0, 23, 36, 0.5, .primary.opacity(0.10))
+            pixel(1, Self.deskY, 21, 1, wood)
+            pixel(1, Self.deskY + 1, 21, 0.5, woodEdge)
+            pixel(2, Self.deskY + 1, 1, 2, woodEdge)
+            pixel(20, Self.deskY + 1, 1, 2, woodEdge)
+
+            // Laptop: open while there is work or a question, closed when resting.
+            let open = phase == .working || phase == .waiting || phase == .finished
+            pixel(7, Self.keyboardY, 13, 1, laptop)
+            if open {
+                let screen: Color
+                switch phase {
+                case .working: screen = tint.light.opacity(glow)
+                case .waiting: screen = PixelWorkbench.amber
+                default: screen = Color(hex: 0x5BD38A)
+                }
+                for i in 0..<8 {
+                    let x = 7 - CGFloat((i * 3) / 8), y = Self.keyboardY - 1 - CGFloat(i)
+                    pixel(x - 1, y, 1, 1, laptopEdge)
+                    pixel(x, y, 1, 1, screen)
+                    if typing { pixel(x + 1, y, 1, 1, tint.light.opacity(0.22 * glow)) }
+                }
+                if pressing && beat % 2 == 0 {
+                    pixel(9 + CGFloat((beat / 2 * 5) % 9), Self.keyboardY, 1, 0.5, tint.light)
+                }
+            } else {
+                pixel(7, Self.keyboardY - 0.5, 13, 0.5, laptopEdge)
+            }
+
+            // Character: side-on while typing, facing you otherwise.
+            let hop = !reduceMotion && phase == .finished && elapsed >= 0 && elapsed < 0.9
+                ? CGFloat((sin(elapsed / 0.9 * .pi) * 3).rounded()) : 0
+            let tapDown = pressing && beat % 2 == 0
+            let bob: CGFloat = tapDown ? 0.5 : 0
+            let blinkTime = (time + (provider == .claude ? 0 : 3)).truncatingRemainder(dividingBy: 7)
+            let blinking = !reduceMotion && !unknown && !typing && blinkTime >= 0 && blinkTime < 0.14
+            let rows = provider == .claude ? (typing ? Self.claudeSide : Self.claudeFront)
+                                           : (typing ? Self.codexSide : Self.codexFront)
+            for (r, line) in rows.enumerated() {
+                for (c, mark) in line.enumerated() where mark != "." {
+                    let x = Self.spriteX + CGFloat(c)
+                    var y = Self.spriteY + CGFloat(r) - hop + bob
+                    switch mark {
+                    case "S": pixel(x, y, 1, 1, shade)
+                    case "A":
+                        if tapDown { y += 1 }
+                        pixel(x, y, 1, 1, body)
+                    case "o":
+                        pixel(x, y, 1, 1, body)
+                        if provider == .claude {
+                            if !blinking || r == 3 { pixel(x, y + (blinking ? 0.5 : 0), 1, blinking ? 0.5 : 1, eye) }
+                        } else {
+                            pixel(x, y, 1, 1, dark ? Color(hex: 0x292C36) : Color(hex: 0x3E424D))
+                        }
+                    default: pixel(x, y, 1, 1, body)
+                    }
+                }
+            }
+            if provider == .codex {
+                let face = Color.white.opacity(unknown ? 0.5 : 0.9)
+                let fx = Self.spriteX + (typing ? 3 : 4), fy = Self.spriteY - hop + bob
+                pixel(fx, fy + 2, 1, 1, face)
+                pixel(fx + 1, fy + 3, 1, 1, face)
+                pixel(fx, fy + 4, 1, 1, face)
+                if !blinking { pixel(fx + (typing ? 3 : 5), fy + 4.5, typing ? 2 : 3, 0.5, face) }
+            }
+            if phase == .waiting {
+                let qx: CGFloat = 32, qy: CGFloat = 6
+                pixel(qx, qy, 2, 1, PixelWorkbench.amber)
+                pixel(qx + 2, qy + 1, 1, 1, PixelWorkbench.amber)
+                pixel(qx + 1, qy + 2, 1, 1, PixelWorkbench.amber)
+                pixel(qx + 1, qy + 4, 1, 1, PixelWorkbench.amber)
+            }
+            if phase == .finished && hop > 0 {
+                pixel(22, 9, 1, 1, tint.light)
+                pixel(34, 8, 1, 1, tint.light)
+                pixel(28, 7, 1, 1, tint.light)
             }
         }
     }
