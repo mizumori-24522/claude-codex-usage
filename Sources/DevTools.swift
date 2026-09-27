@@ -228,6 +228,87 @@ enum DevTools {
         if !CGImageDestinationFinalize(destination) { print("Could not write animation preview") }
     }
 
+    static func renderWorkScenes(to dir: String) {
+        let url = URL(fileURLWithPath: dir)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let now = Date()
+        func provider(_ p: Provider) -> ProviderState {
+            ProviderState(provider: p, snapshot: sample(p, five: p == .claude ? 16 : 11, week: 34),
+                          error: nil, loading: false, stale: false, now: now, mode: .remaining, colorMode: .level)
+        }
+        func activity(_ phase: WorkPhase, since: Date) -> WorkActivity {
+            WorkActivity(phase: phase, sessionCount: phase == .working ? 1 : 0, detail: "表示確認用のデモ", changedAt: since)
+        }
+        let states: [Provider: WorkActivity] = [.claude: activity(.working, since: now), .codex: activity(.waiting, since: now)]
+        for size in [WidgetSize.small, .medium, .large] {
+            for providers in [[Provider.claude], [.claude, .codex]] {
+                for dark in [false, true] {
+                    let view = WidgetContents(items: providers.map(provider), size: size, workStates: states, previewDate: now)
+                        .background(RoundedRectangle(cornerRadius: 24).fill(dark ? Color(hex: 0x22242A) : Color(hex: 0xF2F5F7)))
+                        .padding(16).background(dark ? Color(hex: 0x101216) : Color(hex: 0xDFE8EC))
+                        .environment(\.colorScheme, dark ? .dark : .light)
+                    write(view, scale: 2, to: url.appendingPathComponent("\(size.rawValue)-\(providers.count)-\(dark ? "dark" : "light").png"))
+                }
+            }
+        }
+        var frames: [(CGImage, Double)] = []
+        let phases: [WorkPhase] = [.idle, .working, .waiting, .finished, .unknown]
+        for (index, phase) in phases.enumerated() {
+            let view = WorkSceneFooter(providers: [.claude, .codex], states: [.claude: activity(phase, since: now), .codex: activity(phase, since: now)],
+                                       previewDate: now.addingTimeInterval(phase == .finished ? 0.45 : 0.14))
+                .frame(width: 344).padding(12).background(Color(hex: 0x22242A)).environment(\.colorScheme, .dark)
+            write(view, scale: 2, to: url.appendingPathComponent("phase-\(index).png"))
+        }
+        // Claude's colour follows its 5-hour level (remaining 95 / 70 / 50 / 33 / 18 / 5 %).
+        let levels = HStack(spacing: 0) {
+            ForEach([5.0, 30, 50, 67, 82, 95], id: \.self) { used in
+                WorkSceneFooter(providers: [.claude], states: [.claude: activity(.working, since: now)],
+                                tints: [.claude: CharacterTint.for(ProviderState(provider: .claude, snapshot: sample(.claude, five: used, week: 20),
+                                    error: nil, loading: false, stale: false, now: now, mode: .remaining, colorMode: .level), option: .level)],
+                                previewDate: now.addingTimeInterval(0.14))
+                    .frame(width: 150)
+            }
+        }
+        .padding(12).background(Color(hex: 0x22242A)).environment(\.colorScheme, .dark)
+        write(levels, scale: 2, to: url.appendingPathComponent("levels.png"))
+        // One full typing cycle, including the glance at the viewer, then waiting and done.
+        let cycle = 7.0
+        let base = Date(timeIntervalSinceReferenceDate: (now.timeIntervalSinceReferenceDate / cycle).rounded(.down) * cycle + 4.2)
+        for i in 0..<34 {
+            let phase: WorkPhase = i < 22 ? .working : (i < 28 ? .waiting : .finished)
+            let t: Date = i < 22 ? base.addingTimeInterval(Double(i) * 0.14)
+                                 : (i < 28 ? base.addingTimeInterval(Double(i - 22) * 0.5) : base.addingTimeInterval(Double(i - 28) * 0.15))
+            let states: [Provider: WorkActivity] = [.claude: activity(phase, since: phase == .finished ? base : now),
+                                                    .codex: activity(phase, since: phase == .finished ? base : now)]
+            let view = WorkSceneFooter(providers: [.claude, .codex], states: states, previewDate: t)
+                .frame(width: 344).background(Color(hex: 0x22242A)).environment(\.colorScheme, .dark)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            if let image = renderer.cgImage { frames.append((image, i < 22 ? 0.14 : (i < 28 ? 0.5 : 0.15))) }
+        }
+        guard let destination = CGImageDestinationCreateWithURL(url.appendingPathComponent("work-scene.gif") as CFURL,
+            "com.compuserve.gif" as CFString, frames.count, nil) else { return }
+        CGImageDestinationSetProperties(destination, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+        for (image, delay) in frames {
+            CGImageDestinationAddImage(destination, image, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay]] as CFDictionary)
+        }
+        if !CGImageDestinationFinalize(destination) { print("Could not write work scene preview") }
+    }
+
+    static func dumpActivity() {
+        let activity = WorkActivityStore.shared
+        activity.start()
+        RunLoop.main.run(until: Date().addingTimeInterval(3))
+        for provider in Provider.allCases {
+            if let state = activity.states[provider] {
+                print("\(provider.rawValue): \(state.phase), sessions: \(state.sessionCount), \(state.detail)")
+            } else {
+                print("\(provider.rawValue): unknown")
+            }
+        }
+        activity.stop()
+    }
+
     static func dump() {
         final class Flag { var done = false }
         let flag = Flag()

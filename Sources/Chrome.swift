@@ -24,7 +24,7 @@ final class WidgetPanel: NSPanel {
 final class DragHostingView<Content: View>: NSHostingView<Content> {
     var onDoubleClick: (() -> Void)?
     var onPress: (() -> Void)?
-    var menuProvider: (() -> NSMenu?)?
+    var onContextClick: ((NSView) -> Void)?
 
     override func mouseDown(with event: NSEvent) {
         onPress?()
@@ -34,8 +34,7 @@ final class DragHostingView<Content: View>: NSHostingView<Content> {
     }
     override func rightMouseDown(with event: NSEvent) {
         onPress?()
-        guard let menu = menuProvider?() else { return }
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
+        onContextClick?(self)
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
@@ -47,7 +46,8 @@ final class WidgetController: NSObject {
     private var panel: WidgetPanel?
     private var glass: NSGlassEffectView?
     private var host: DragHostingView<WidgetRoot>?
-    var menuProvider: (() -> NSMenu)?
+    /// Opens the control panel next to the widget.
+    var contextHandler: ((NSView) -> Void)?
 
     private static let desktopLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
 
@@ -123,7 +123,7 @@ final class WidgetController: NSObject {
         host.sizingOptions = [.intrinsicContentSize]
         host.onDoubleClick = { [weak self] in self?.store.refresh(manual: true) }
         host.onPress = { [weak self] in self?.raise() }
-        host.menuProvider = { [weak self] in self?.menuProvider?() }
+        host.onContextClick = { [weak self] view in self?.contextHandler?(view) }
         let size = host.fittingSize
 
         let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: size))
@@ -137,6 +137,8 @@ final class WidgetController: NSObject {
         panel.setFrameTopLeftPoint(restoredTopLeft(for: size))
         NotificationCenter.default.addObserver(self, selector: #selector(didMove),
                                                name: NSWindow.didMoveNotification, object: panel)
+        NotificationCenter.default.addObserver(self, selector: #selector(occlusionChanged),
+                                               name: NSWindow.didChangeOcclusionStateNotification, object: panel)
         self.host = host
         self.glass = glass
         self.panel = panel
@@ -152,6 +154,12 @@ final class WidgetController: NSObject {
         return NSPoint(x: vf.maxX - size.width - 28, y: vf.maxY - 28)
     }
 
+    @objc private func occlusionChanged(_ note: Notification) {
+        guard let panel else { return }
+        let visible = panel.isVisible && panel.occlusionState.contains(.visible)
+        if SceneVisibility.shared.visible != visible { SceneVisibility.shared.visible = visible }
+    }
+
     @objc private func didMove(_ note: Notification) {
         guard let f = panel?.frame else { return }
         UserDefaults.standard.set([Double(f.minX), Double(f.maxY)], forKey: "widgetTopLeft")
@@ -159,19 +167,6 @@ final class WidgetController: NSObject {
 }
 
 // MARK: - Menu bar
-
-final class ClosureMenuItem: NSMenuItem {
-    private let handler: () -> Void
-
-    init(_ title: String, checked: Bool = false, key: String = "", handler: @escaping () -> Void) {
-        self.handler = handler
-        super.init(title: title, action: #selector(fire), keyEquivalent: key)
-        target = self
-        state = checked ? .on : .off
-    }
-    required init(coder: NSCoder) { fatalError("unused") }
-    @objc private func fire() { handler() }
-}
 
 enum StatusIcon {
     struct Segment {
@@ -479,21 +474,31 @@ enum StatusIcon {
 }
 
 @MainActor
-final class StatusController: NSObject, NSMenuDelegate {
+final class StatusController: NSObject, NSPopoverDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let store: UsageStore
     private let settings: Settings
     private let widget: WidgetController
-    private let menu = NSMenu()
+    private let popover = NSPopover()
 
     init(store: UsageStore, settings: Settings, widget: WidgetController) {
         self.store = store
         self.settings = settings
         self.widget = widget
         super.init()
-        menu.delegate = self
-        item.menu = menu
         item.button?.imagePosition = .imageOnly
+        item.button?.target = self
+        item.button?.action = #selector(statusClicked)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+
+        let panel = NSHostingController(rootView: ControlPanel(store: store, settings: settings,
+                                                               raiseWidget: { [weak widget] in widget?.raise() }))
+        panel.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = panel
+        popover.behavior = .transient
+        popover.animates = true
+        popover.delegate = self
+
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(accessibilityChanged),
             name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         update()
@@ -573,111 +578,23 @@ final class StatusController: NSObject, NSMenuDelegate {
         button.title = ""
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) { populate(menu) }
-    func menuWillOpen(_ menu: NSMenu) { store.refreshIfStale(300) }
-
-    func makeMenu() -> NSMenu {
-        let m = NSMenu()
-        populate(m)
-        return m
+    @objc private func statusClicked(_ sender: NSStatusBarButton) {
+        if popover.isShown { popover.performClose(nil) } else { showPanel(from: sender) }
     }
 
-    private func populate(_ m: NSMenu) {
-        m.removeAllItems()
-
-        let card = NSMenuItem()
-        let host = NSHostingView(rootView: MenuCardRoot(store: store, settings: settings))
-        host.frame.size = host.fittingSize
-        card.view = host
-        m.addItem(card)
-        m.addItem(.separator())
-
-        m.addItem(ClosureMenuItem("今すぐ更新", key: "r") { [weak self] in self?.store.refresh(manual: true) })
-        for p in settings.providerSelection.providers {
-            m.addItem(ClosureMenuItem("\(p.name) の使用量ページを開く") { NSWorkspace.shared.open(p.usageURL) })
-        }
-        m.addItem(.separator())
-
-        m.addItem(submenu("表示するサービス", ProviderSelection.allCases, current: settings.providerSelection, label: \.label) { [weak self] in self?.settings.providerSelection = $0 })
-        m.addItem(ClosureMenuItem("デスクトップウィジェットを表示", checked: settings.showWidget) { [weak self] in
-            self?.settings.showWidget.toggle()
-        })
-        if settings.showWidget && settings.placement == .desktop {
-            m.addItem(ClosureMenuItem("ウィジェットを手前に出す") { [weak self] in self?.widget.raise() })
-        }
-        m.addItem(submenu("サイズ", WidgetSize.allCases, current: settings.widgetSize, label: \.label) { [weak self] in self?.settings.widgetSize = $0 })
-        m.addItem(submenu("配置", Placement.allCases, current: settings.placement, label: \.label) { [weak self] in self?.settings.placement = $0 })
-        m.addItem(submenu("スタイル", GlassStyle.allCases, current: settings.glassStyle, label: \.label) { [weak self] in self?.settings.glassStyle = $0 })
-        let colors = submenu("カラー", ColorMode.allCases, current: settings.colorMode, label: \.label) { [weak self] in self?.settings.colorMode = $0 }
-        colors.submenu?.addItem(.separator())
-        for item in colorLegend() { colors.submenu?.addItem(item) }
-        m.addItem(colors)
-        m.addItem(submenu("数値の表示", DisplayMode.allCases, current: settings.displayMode, label: \.label) { [weak self] in self?.settings.displayMode = $0 })
-        m.addItem(.separator())
-
-        let bar = submenu("メニューバー", MenuBarMode.allCases, current: settings.menuBarMode, label: \.label) { [weak self] in self?.settings.menuBarMode = $0 }
-        bar.submenu?.autoenablesItems = false
-        bar.submenu?.addItem(.separator())
-        let only = ClosureMenuItem("Claude だけ表示（Codex はこのメニューで確認）", checked: settings.menuBarClaudeOnly) { [weak self] in
-            self?.settings.menuBarClaudeOnly.toggle()
-        }
-        only.isEnabled = !settings.menuBarMode.isCharacter
-        bar.submenu?.addItem(only)
-        bar.submenu?.addItem(submenu("キャラクターの色", CharacterColor.allCases, current: settings.characterColor, label: \.label) { [weak self] in self?.settings.characterColor = $0 })
-        m.addItem(bar)
-        m.addItem(submenu("更新間隔", [2, 5, 10, 15, 30], current: settings.intervalMinutes, label: { "\($0)分ごと" }) { [weak self] in self?.settings.intervalMinutes = $0 })
-        m.addItem(ClosureMenuItem("Claude のトークン切れを CLI で自動更新", checked: settings.autoCLIRefresh) { [weak self] in
-            self?.settings.autoCLIRefresh.toggle()
-        })
-        m.addItem(ClosureMenuItem("ログイン時に起動", checked: SMAppService.mainApp.status == .enabled) {
-            Self.toggleLoginItem()
-        })
-        m.addItem(.separator())
-        m.addItem(ClosureMenuItem("Claude & Codex Usage を終了", key: "q") { NSApp.terminate(nil) })
+    func showPanelFromMenuBar() {
+        guard let button = item.button else { return }
+        showPanel(from: button)
     }
 
-    /// Read-only rows explaining which colour means what.
-    private func colorLegend() -> [NSMenuItem] {
-        let rows: [(String, Color)] = [("残り 81〜100%（使用 〜19%）　たっぷり", Palette.sky[1]),
-                                       ("残り 61〜80%（使用 20〜39%）　OK", Palette.green[1]),
-                                       ("残り 41〜60%（使用 40〜59%）　半分くらい", Palette.purple[1]),
-                                       ("残り 26〜40%（使用 60〜74%）　ほどほど", Palette.yellow[1]),
-                                       ("残り 11〜25%（使用 75〜89%）　注意", Palette.orange[1]),
-                                       ("残り 0〜10%（使用 90%〜）　もうすぐ上限", Palette.red[1])]
-        return rows.map { text, color in
-            let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-            let s = NSMutableAttributedString(string: "●  ", attributes: [.foregroundColor: NSColor(color),
-                                                                          .font: NSFont.menuFont(ofSize: 0)])
-            s.append(NSAttributedString(string: text, attributes: [.foregroundColor: NSColor.secondaryLabelColor,
-                                                                   .font: NSFont.menuFont(ofSize: 0)]))
-            item.attributedTitle = s
-            item.isEnabled = false
-            return item
-        }
-    }
-
-    private func submenu<T: Equatable>(_ title: String, _ options: [T], current: T,
-                                       label: @escaping (T) -> String, set: @escaping (T) -> Void) -> NSMenuItem {
-        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        let sub = NSMenu()
-        for option in options {
-            sub.addItem(ClosureMenuItem(label(option), checked: option == current) { set(option) })
-        }
-        parent.submenu = sub
-        return parent
-    }
-
-    private static func toggleLoginItem() {
-        let service = SMAppService.mainApp
-        do {
-            if service.status == .enabled { try service.unregister() } else { try service.register() }
-        } catch {
-            let alert = NSAlert()
-            alert.messageText = "ログイン項目を変更できませんでした"
-            alert.informativeText = "システム設定 › 一般 › ログイン項目 から Claude & Codex Usage を追加してください。\n\n\(error.localizedDescription)"
-            NSApp.activate()
-            alert.runModal()
-        }
+    /// Shows the panel under the menu bar icon, or beside the widget when opened from there.
+    func showPanel(from view: NSView) {
+        if popover.isShown { popover.performClose(nil) }
+        store.refreshIfStale(300)
+        NSApp.activate()
+        let edge: NSRectEdge = view is NSStatusBarButton ? .minY : .minX
+        popover.show(relativeTo: view.bounds, of: view, preferredEdge: edge)
+        popover.contentViewController?.view.window?.makeKey()
     }
 }
 
@@ -694,9 +611,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         widget = WidgetController(store: store, settings: settings)
         status = StatusController(store: store, settings: settings, widget: widget)
-        widget.menuProvider = { [weak self] in self?.status.makeMenu() ?? NSMenu() }
+        widget.contextHandler = { [weak self] view in self?.status.showPanel(from: view) }
+        // `--show-panel [settings]` opens the panel at launch (handy for screenshots).
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--show-panel") {
+            if args.indices.contains(i + 1), args[i + 1] == "settings" { PanelState.shared.tab = .settings }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.status.showPanelFromMenuBar() }
+        }
         widget.apply()
         store.start()
+        updateActivityMonitoring()
 
         settings.objectWillChange
             .sink { [weak self] _ in
@@ -705,6 +629,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.status.update()
                     self?.store.reschedule()
                     self?.store.refreshMissing()   // e.g. a service was just switched on
+                    self?.updateActivityMonitoring()
                 }
             }
             .store(in: &bag)
@@ -717,6 +642,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &bag)
     }
+
+    private func updateActivityMonitoring() {
+        if settings.showWidget && settings.showWorkScene { WorkActivityStore.shared.start() }
+        else { WorkActivityStore.shared.stop() }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) { WorkActivityStore.shared.stop() }
 }
 
 @main
@@ -733,6 +665,8 @@ enum Main {
         if args.count >= 3, args[1] == "--menubar" { DevTools.renderMenuBarStyles(to: args[2]); return }
         if args.count >= 3, args[1] == "--character" { DevTools.renderCharacter(to: args[2]); return }
         if args.count >= 3, args[1] == "--character-animation" { DevTools.renderCharacterAnimation(to: args[2]); return }
+        if args.count >= 3, args[1] == "--work-scenes" { DevTools.renderWorkScenes(to: args[2]); return }
+        if args.count >= 2, args[1] == "--activity" { DevTools.dumpActivity(); return }
 
         let app = NSApplication.shared
         let delegate = AppDelegate()

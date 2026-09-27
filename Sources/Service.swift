@@ -477,6 +477,9 @@ final class Settings: ObservableObject {
     private let d = UserDefaults.standard
 
     @Published var showWidget: Bool        { didSet { d.set(showWidget, forKey: "showWidget") } }
+    @Published var showWorkScene: Bool     { didSet { d.set(showWorkScene, forKey: "showWorkScene") } }
+    /// The weekly breakdown and credits change rarely, so the widget leaves them to the panel by default.
+    @Published var showWidgetDetails: Bool { didSet { d.set(showWidgetDetails, forKey: "showWidgetDetails") } }
     @Published var widgetSize: WidgetSize  { didSet { d.set(widgetSize.rawValue, forKey: "widgetSize") } }
     @Published var placement: Placement    { didSet { d.set(placement.rawValue, forKey: "placement") } }
     @Published var displayMode: DisplayMode { didSet { d.set(displayMode.rawValue, forKey: "displayMode") } }
@@ -499,11 +502,13 @@ final class Settings: ObservableObject {
     }
 
     init() {
-        d.register(defaults: ["showWidget": true, "widgetSize": "medium", "placement": "desktop",
+        d.register(defaults: ["showWidget": true, "showWorkScene": true, "showWidgetDetails": false, "widgetSize": "medium", "placement": "desktop",
                               "displayMode": "used", "glassStyle": "regular", "menuBarMode": "session",
                               "intervalMinutes": 5, "autoCLIRefresh": true, "providers": "both", "colorMode": "level",
                               "menuBarClaudeOnly": true, "characterColor": "level"])
         showWidget = d.bool(forKey: "showWidget")
+        showWorkScene = d.bool(forKey: "showWorkScene")
+        showWidgetDetails = d.bool(forKey: "showWidgetDetails")
         widgetSize = WidgetSize(rawValue: d.string(forKey: "widgetSize") ?? "") ?? .medium
         placement = Placement(rawValue: d.string(forKey: "placement") ?? "") ?? .desktop
         displayMode = DisplayMode(rawValue: d.string(forKey: "displayMode") ?? "") ?? .used

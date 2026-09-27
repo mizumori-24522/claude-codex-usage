@@ -683,12 +683,13 @@ struct MediumCard: View {
 
 struct ProviderSection: View {
     var p: ProviderState
+    var extras = true
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HeaderRow(p: p)
             GaugePair(p: p)
             ResetRow(p: p)
-            ProviderExtras(p: p)
+            if extras { ProviderExtras(p: p) }
         }
     }
 }
@@ -697,6 +698,7 @@ struct LargeCard: View {
     var items: [ProviderState]
     var width: CGFloat = 344
     var padding: CGFloat = 16
+    var extras = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -704,7 +706,7 @@ struct LargeCard: View {
                 if i > 0 {
                     Rectangle().fill(.primary.opacity(0.14)).frame(height: 1)
                 }
-                ProviderSection(p: p)
+                ProviderSection(p: p, extras: extras)
             }
         }
         .padding(padding)
@@ -835,25 +837,56 @@ extension UsageStore {
 struct WidgetRoot: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var settings: Settings
+    @ObservedObject var activity = WorkActivityStore.shared
 
     var body: some View {
-        let items = store.states(settings)
-        if settings.widgetSize == .large {
-            // Same content as the menu card, drawn larger so the extra room goes to legibility.
-            LargeCard(items: items).magnified(WidgetSize.largeScale)
-        } else if items.count == 1 {
-            if settings.widgetSize == .small { SmallCard(p: items[0]) } else { MediumCard(p: items[0]) }
-        } else {
-            if settings.widgetSize == .small { DualSmallCard(items: items) } else { DualMediumCard(items: items) }
-        }
+        WidgetContents(items: store.states(settings), size: settings.widgetSize,
+                       workStates: settings.showWorkScene ? activity.states : nil,
+                       characterColor: settings.characterColor, showDetails: settings.showWidgetDetails)
     }
 }
 
-struct MenuCardRoot: View {
-    @ObservedObject var store: UsageStore
-    @ObservedObject var settings: Settings
+/// The same layout is used for the live widget and deterministic offline previews.
+struct WidgetContents: View {
+    var items: [ProviderState]
+    var size: WidgetSize
+    var workStates: [Provider: WorkActivity]?
+    var characterColor: CharacterColor = .level
+    var showDetails = false
+    var previewDate: Date? = nil
+
+    private var tints: [Provider: CharacterTint] {
+        Dictionary(uniqueKeysWithValues: items.map { ($0.provider, CharacterTint.for($0, option: characterColor)) })
+    }
+
+    private var width: CGFloat { size == .small ? 164 : (size == .large ? 344 * WidgetSize.largeScale : 344) }
 
     var body: some View {
-        LargeCard(items: store.states(settings), width: 336, padding: 14)
+        VStack(spacing: 0) {
+            usageCard
+            if let workStates {
+                if size == .large {
+                    WorkSceneFooter(providers: items.map(\.provider), states: workStates, tints: tints,
+                                    previewDate: previewDate)
+                        .frame(width: 344).magnified(WidgetSize.largeScale)
+                } else {
+                    WorkSceneFooter(providers: items.map(\.provider), states: workStates, tints: tints,
+                                    compact: size == .small, previewDate: previewDate)
+                }
+            }
+        }
+        .frame(width: width)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var usageCard: some View {
+        if size == .large {
+            // Same content as the menu card, drawn larger so the extra room goes to legibility.
+            LargeCard(items: items, extras: showDetails).magnified(WidgetSize.largeScale)
+        } else if items.count == 1 {
+            if size == .small { SmallCard(p: items[0]) } else { MediumCard(p: items[0]) }
+        } else {
+            if size == .small { DualSmallCard(items: items) } else { DualMediumCard(items: items) }
+        }
     }
 }
