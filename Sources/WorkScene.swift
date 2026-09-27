@@ -1,5 +1,7 @@
 import SwiftUI
 
+enum WorkSceneTileColors { static let blue = Color(hex: 0x3B82F6) }
+
 /// Whether anyone can see the widget. A desktop-level widget spends most of its life behind
 /// other windows, and animating it there only costs power.
 @MainActor
@@ -71,7 +73,11 @@ private struct WorkSceneTile: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var visibility = SceneVisibility.shared
 
+    static let unseenBlue = WorkSceneTileColors.blue
+    private var unseen: Date? { activity.pendingCompletion }
+
     private var label: String {
+        if let unseen { return "完了 \(Fmt.format(unseen, "H:mm"))" }
         switch activity.phase {
         case .working: return "作業中"
         case .waiting: return "確認待ち"
@@ -82,6 +88,7 @@ private struct WorkSceneTile: View {
     }
 
     private var indicator: Color {
+        if unseen != nil { return Self.unseenBlue }
         switch activity.phase {
         case .working, .finished: return tint.body
         case .waiting: return PixelWorkbench.amber
@@ -113,7 +120,8 @@ private struct WorkSceneTile: View {
             } else {
                 TimelineView(WorkSceneSchedule(phase: activity.phase, changedAt: activity.changedAt,
                                               reducedMotion: reduceMotion || !visibility.visible,
-                                              blinkOffset: provider == .claude ? 0 : 3)) { clock in
+                                              blinkOffset: provider == .claude ? 0 : 3,
+                                              waving: unseen != nil)) { clock in
                     scene(at: clock.date)
                 }
             }
@@ -128,17 +136,17 @@ private struct WorkSceneTile: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(provider.name)、\(label)\(activity.sessionCount > 1 ? "、\(activity.sessionCount)セッション" : "")")
+        .accessibilityLabel("\(provider.name)、\(label)\(unseen != nil ? "、未確認" : "")\(activity.sessionCount > 1 ? "、\(activity.sessionCount)セッション" : "")")
         .help(activity.detail)
     }
 
     @ViewBuilder private func scene(at date: Date) -> some View {
         Group {
             if style == .laptop {
-                LaptopWorkbench(provider: provider, phase: activity.phase, tint: tint, date: date,
+                LaptopWorkbench(provider: provider, phase: activity.phase, tint: tint, unseen: unseen != nil, date: date,
                                 changedAt: activity.changedAt, reduceMotion: reduceMotion)
             } else {
-                PixelWorkbench(provider: provider, phase: activity.phase, tint: tint, date: date,
+                PixelWorkbench(provider: provider, phase: activity.phase, tint: tint, unseen: unseen != nil, date: date,
                                changedAt: activity.changedAt, reduceMotion: reduceMotion)
             }
         }
@@ -154,9 +162,27 @@ private struct WorkSceneSchedule: TimelineSchedule {
     var changedAt: Date
     var reducedMotion: Bool
     var blinkOffset: Double
+    var waving = false
 
     func entries(from startDate: Date, mode: Mode) -> AnySequence<Date> {
-        guard !reducedMotion, phase != .unknown else { return AnySequence([startDate]) }
+        guard !reducedMotion, phase != .unknown || waving else { return AnySequence([startDate]) }
+        if waving && phase != .working && phase != .waiting && phase != .finished {
+            // Frames only for the brief wave (1.2 s every 6 s); the rest of the time is still.
+            return AnySequence {
+                var next = startDate
+                return AnyIterator<Date> {
+                    defer {
+                        let t = next.timeIntervalSinceReferenceDate
+                        let cycleStart = floor(t / PixelWorkbench.waveCycle) * PixelWorkbench.waveCycle
+                        let within = t - cycleStart
+                        let following = within < PixelWorkbench.waveLength - 1e-6
+                            ? t + PixelWorkbench.waveStep : cycleStart + PixelWorkbench.waveCycle
+                        next = Date(timeIntervalSinceReferenceDate: max(following, t + 0.05))
+                    }
+                    return next
+                }
+            }
+        }
         if phase == .finished {
             let end = changedAt.addingTimeInterval(0.9)
             guard startDate < end else { return AnySequence([startDate]) }
@@ -206,6 +232,7 @@ struct PixelWorkbench: View {
     var provider: Provider
     var phase: WorkPhase
     var tint: CharacterTint
+    var unseen = false
     var date: Date
     var changedAt: Date
     var reduceMotion: Bool
@@ -213,6 +240,21 @@ struct PixelWorkbench: View {
 
     static let keystroke = 0.4   // unhurried: about 2.5 frames a second keeps the work scene light
     static let amber = Color(hex: 0xC89C4C)
+    static let waveCycle = 6.0, waveLength = 1.2, waveStep = 0.2
+
+    /// While a finished turn is unseen: waving now, and which of the two arm poses to show.
+    static func wave(at time: TimeInterval, unseen: Bool, reduceMotion: Bool) -> (active: Bool, up: Bool) {
+        guard unseen, !reduceMotion else { return (false, false) }
+        let within = time.truncatingRemainder(dividingBy: waveCycle)
+        return (within < waveLength, Int(within / waveStep) % 2 == 0)
+    }
+
+    /// The blue dot that marks an unseen result, like the unread dot in the Claude app.
+    static func unseenDot(_ context: GraphicsContext, origin: CGPoint, unit: CGFloat, x: CGFloat, y: CGFloat) {
+        let rect = CGRect(x: origin.x + x * unit, y: origin.y + y * unit, width: 2.4 * unit, height: 2.4 * unit)
+        context.fill(Path(ellipseIn: rect.insetBy(dx: -0.6 * unit, dy: -0.6 * unit)), with: .color(.white.opacity(0.85)))
+        context.fill(Path(ellipseIn: rect), with: .color(WorkSceneTileColors.blue))
+    }
 
     private static let claude = [
         "..############..", "..############..", "..##o######o##..", "..##o######o##..",
@@ -289,8 +331,11 @@ struct PixelWorkbench: View {
 
             let rows = provider == .claude ? Self.claude : Self.codex
             let bodyColor = accent.opacity(phase == .unknown ? 0.48 : 1)
+            let wave = Self.wave(at: time, unseen: unseen && !working, reduceMotion: reduceMotion)
             for (row, line) in rows.enumerated() {
                 for (column, mark) in line.enumerated() where mark != "." {
+                    // The outer arm lifts to wave; its resting cells stay empty meanwhile.
+                    if wave.active && (provider == .claude ? (row == 4 || row == 5) && column <= 1 : row == 6 && column == 0) { continue }
                     let x = CGFloat(column + 1), y = CGFloat(row + 11) - lift
                     pixel(x, y, 1, 1, bodyColor)
                     if mark == "o" {
@@ -309,6 +354,16 @@ struct PixelWorkbench: View {
                 pixel(5, 15 - lift, 1, 1, .white.opacity(0.9))
                 if !blinking { pixel(10, 15 - lift, 3, 0.5, .white.opacity(0.9)) }
             }
+
+            if wave.active {
+                let arm: [(CGFloat, CGFloat)] = provider == .claude
+                    ? (wave.up ? [(0, 1), (1, 1), (0, 2), (1, 2), (0, 3), (1, 3)]
+                               : [(-2, 1), (-1, 1), (-1, 2), (0, 2), (0, 3), (1, 3)])
+                    : (wave.up ? [(-1, 3), (0, 3), (-1, 4), (0, 4), (0, 5)]
+                               : [(-3, 3), (-2, 3), (-2, 4), (-1, 4), (0, 5)])
+                for (c, r) in arm { pixel(c + 1, r + 11 - lift, 1, 1, bodyColor) }
+            }
+            if unseen && !working { Self.unseenDot(context, origin: origin, unit: unit, x: 13.2, y: 7.2) }
 
             if working {
                 // One hand reaches over to the keyboard and taps.
@@ -335,6 +390,7 @@ struct LaptopWorkbench: View {
     var provider: Provider
     var phase: WorkPhase
     var tint: CharacterTint
+    var unseen = false
     var date: Date
     var changedAt: Date
     var reduceMotion: Bool
@@ -430,8 +486,10 @@ struct LaptopWorkbench: View {
             let blinking = !reduceMotion && !unknown && !typing && blinkTime >= 0 && blinkTime < 0.14
             let rows = provider == .claude ? (typing ? Self.claudeSide : Self.claudeFront)
                                            : (typing ? Self.codexSide : Self.codexFront)
+            let wave = PixelWorkbench.wave(at: time, unseen: unseen && !typing, reduceMotion: reduceMotion)
             for (r, line) in rows.enumerated() {
                 for (c, mark) in line.enumerated() where mark != "." {
+                    if wave.active && (provider == .claude ? (r == 4 || r == 5) && c >= 14 : r == 6 && c == 15) { continue }
                     let x = Self.spriteX + CGFloat(c)
                     var y = Self.spriteY + CGFloat(r) - hop + bob
                     switch mark {
@@ -458,6 +516,15 @@ struct LaptopWorkbench: View {
                 pixel(fx, fy + 4, 1, 1, face)
                 if !blinking { pixel(fx + (typing ? 3 : 5), fy + 4.5, typing ? 2 : 3, 0.5, face) }
             }
+            if wave.active {
+                let arm: [(CGFloat, CGFloat)] = provider == .claude
+                    ? (wave.up ? [(14, 1), (15, 1), (14, 2), (15, 2), (14, 3), (15, 3)]
+                               : [(16, 1), (17, 1), (15, 2), (16, 2), (14, 3), (15, 3)])
+                    : (wave.up ? [(15, 3), (16, 3), (15, 4), (16, 4), (15, 5)]
+                               : [(17, 3), (18, 3), (16, 4), (17, 4), (15, 5)])
+                for (c, r) in arm { pixel(Self.spriteX + c, Self.spriteY + r - hop, 1, 1, body) }
+            }
+            if unseen && !typing { PixelWorkbench.unseenDot(context, origin: origin, unit: unit, x: 19.5, y: 9.2) }
             if phase == .waiting {
                 let qx: CGFloat = 32, qy: CGFloat = 6
                 pixel(qx, qy, 2, 1, PixelWorkbench.amber)

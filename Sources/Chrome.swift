@@ -122,7 +122,10 @@ final class WidgetController: NSObject {
         let host = DragHostingView(rootView: WidgetRoot(store: store, settings: settings))
         host.sizingOptions = [.intrinsicContentSize]
         host.onDoubleClick = { [weak self] in self?.store.refresh(manual: true) }
-        host.onPress = { [weak self] in self?.raise() }
+        host.onPress = { [weak self] in
+            self?.raise()
+            WorkActivityStore.shared.markSeen()   // a click on the widget acknowledges finished work
+        }
         host.onContextClick = { [weak self] view in self?.contextHandler?(view) }
         let size = host.fittingSize
 

@@ -273,6 +273,23 @@ enum DevTools {
         }
         .padding(12).background(Color(hex: 0x22242A)).environment(\.colorScheme, .dark)
         write(styles, scale: 2, to: url.appendingPathComponent("styles.png"))
+        // An unseen completion: resting with the blue dot, then the two wave poses, in both styles.
+        let waveBase = Date(timeIntervalSinceReferenceDate: floor(now.timeIntervalSinceReferenceDate / PixelWorkbench.waveCycle) * PixelWorkbench.waveCycle)
+        let unseen = VStack(spacing: 0) {
+            ForEach(WorkSceneStyle.allCases, id: \.self) { style in
+                HStack(spacing: 0) {
+                    ForEach([3.0, 0.1, 0.3], id: \.self) { offset in
+                        WorkSceneFooter(providers: [.claude, .codex],
+                                        states: [.claude: WorkActivity(phase: .idle, changedAt: now, lastFinishedAt: now, unseenSince: now.addingTimeInterval(-600)),
+                                                 .codex: WorkActivity(phase: .idle, changedAt: now, lastFinishedAt: now, unseenSince: now.addingTimeInterval(-60))],
+                                        style: style, previewDate: waveBase.addingTimeInterval(offset))
+                            .frame(width: 300)
+                    }
+                }
+            }
+        }
+        .padding(12).background(Color(hex: 0x22242A)).environment(\.colorScheme, .dark)
+        write(unseen, scale: 2, to: url.appendingPathComponent("unseen.png"))
         // Claude's colour follows its 5-hour level (remaining 95 / 70 / 50 / 33 / 18 / 5 %).
         let levels = HStack(spacing: 0) {
             ForEach([5.0, 30, 50, 67, 82, 95], id: \.self) { used in

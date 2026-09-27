@@ -40,6 +40,7 @@ struct ActivityChecks {
         check(signal.phase == .working, "answered question resumes work")
         signal.consume(codex("task_complete", at: 3), provider: .codex)
         check(signal.phase == .finished, "explicit completion")
+        check(signal.lastFinishedAt == start.addingTimeInterval(3), "completion time is remembered for the unseen mark")
         signal.consume(codex("task_started", at: 1), provider: .codex)
         check(signal.phase == .finished, "out-of-order records cannot undo completion")
         check(signal.effectivePhase(at: start.addingTimeInterval(9)) == .idle, "completion is brief")
@@ -115,6 +116,7 @@ struct ActivityChecks {
         try FileManager.default.setAttributes([.modificationDate: start], ofItemAtPath: firstFile.path)
         let scanner = WorkActivityScanner(home: fixture, listProcesses: { nil })
         let working = scanner.poll(guiProviders: [.codex], now: start)
+        check(working[.codex]?.lastFinishedAt == nil, "no completion yet, nothing to mark")
         check(working[.codex]?.phase == .working && working[.codex]?.sessionCount == 1, "scanner aggregates a real event")
         let noClaudeEvents = scanner.poll(guiProviders: [.codex, .claude], now: start.addingTimeInterval(2))
         check(noClaudeEvents[.claude]?.phase == .unknown, "GUI app without local events is unknown")
@@ -138,6 +140,7 @@ struct ActivityChecks {
         })
         let afterWork = running.poll(guiProviders: [], now: start.addingTimeInterval(2400))
         check(afterWork[.codex]?.phase == .idle, "an old interrupted session does not make an idle app undetected")
+        check(afterWork[.codex]?.lastFinishedAt == start.addingTimeInterval(290), "the latest completion across sessions is reported")
 
         // A busy day with many sessions is not a detection failure.
         for i in 0..<30 {

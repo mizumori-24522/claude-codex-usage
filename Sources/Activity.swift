@@ -11,14 +11,24 @@ struct WorkActivity: Equatable {
     var sessionCount: Int
     var detail: String
     var changedAt: Date
+    /// The most recent completed turn across this service's sessions.
+    var lastFinishedAt: Date?
+    /// Set while that completion has not been looked at yet (like an unread dot in the app).
+    var unseenSince: Date?
 
     init(phase: WorkPhase = .unknown, sessionCount: Int = 0,
-         detail: String = "状態を確認しています", changedAt: Date = Date()) {
+         detail: String = "状態を確認しています", changedAt: Date = Date(),
+         lastFinishedAt: Date? = nil, unseenSince: Date? = nil) {
         self.phase = phase
         self.sessionCount = sessionCount
         self.detail = detail
         self.changedAt = changedAt
+        self.lastFinishedAt = lastFinishedAt
+        self.unseenSince = unseenSince
     }
+
+    /// An unseen completion only matters while nothing new is running.
+    var pendingCompletion: Date? { phase == .working || phase == .waiting ? nil : unseenSince }
 }
 
 /// Reads only local session events. App launch and usage refreshes are not work events.
@@ -31,9 +41,51 @@ final class WorkActivityStore: ObservableObject {
     private let scanner = WorkActivityScanner()
     private let queue = DispatchQueue(label: "local.claudecodexusage.activity", qos: .utility)
     private var polling: Task<Void, Never>?
+    private var latest: [Provider: WorkActivity] = [:]
+    /// Completions after these moments count as unseen. Starts at launch, so older ones are ignored.
+    private var seenAt: [Provider: Date] = [:]
+    private var activationObserver: NSObjectProtocol?
+
+    static func bundleID(_ p: Provider) -> String { p == .codex ? "com.openai.codex" : "com.anthropic.claudefordesktop" }
+
+    /// Marks completions as seen, e.g. after a click on the widget.
+    func markSeen(_ providers: [Provider] = Provider.allCases) {
+        for p in providers { seenAt[p] = Date() }
+        publish()
+    }
+
+    private func publish() {
+        let now = Date()
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier?.lowercased()
+        var merged = latest
+        for (p, activity) in latest {
+            var a = activity
+            // New work supersedes an old result; looking at the app while it finishes counts as seen.
+            if a.phase == .working || a.phase == .waiting || front == Self.bundleID(p) { seenAt[p] = now }
+            if let finished = a.lastFinishedAt, finished > (seenAt[p] ?? .distantFuture) {
+                a.unseenSince = finished
+            } else {
+                a.unseenSince = nil
+            }
+            merged[p] = a
+        }
+        if states != merged { states = merged }
+    }
 
     func start() {
         guard polling == nil else { return }
+        let launched = Date()
+        for p in Provider.allCases where seenAt[p] == nil { seenAt[p] = launched }
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundle = app?.bundleIdentifier?.lowercased()
+            Task { @MainActor in
+                guard let self else { return }
+                let opened = Provider.allCases.filter { Self.bundleID($0) == bundle }
+                if !opened.isEmpty { self.markSeen(opened) }
+            }
+        }
         let scanner = self.scanner
         let queue = self.queue
         polling = Task { [weak self] in
@@ -53,7 +105,8 @@ final class WorkActivityStore: ObservableObject {
                     queue.async { continuation.resume(returning: scanner.poll(guiProviders: guiProviders)) }
                 }
                 guard !Task.isCancelled, let self else { break }
-                if self.states != result { self.states = result }
+                self.latest = result
+                self.publish()
                 // The scanner runs off the main thread; one scan at a time, even after a slow read.
                 do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { break }
             }
@@ -63,6 +116,8 @@ final class WorkActivityStore: ObservableObject {
     func stop() {
         polling?.cancel()
         polling = nil
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+        activationObserver = nil
     }
 }
 
@@ -71,6 +126,7 @@ final class WorkActivityStore: ObservableObject {
 struct WorkSessionSignal {
     private(set) var phase: WorkPhase = .unknown
     private(set) var lastEvidenceAt: Date?
+    private(set) var lastFinishedAt: Date?
     static let abandonedAfter: TimeInterval = 30 * 60
 
     mutating func consume(_ record: [String: Any], provider: Provider) {
@@ -81,6 +137,7 @@ struct WorkSessionSignal {
         guard let next else { return }
         phase = next
         lastEvidenceAt = timestamp
+        if next == .finished { lastFinishedAt = timestamp }
     }
 
     func effectivePhase(at now: Date) -> WorkPhase {
@@ -288,7 +345,9 @@ final class WorkActivityScanner: @unchecked Sendable {
                                               .finished: "作業が完了しました", .unknown: "作業状態を確認できません"]
             let old = previous[provider]
             let changedAt = old?.phase == phase ? old!.changedAt : now
-            result[provider] = WorkActivity(phase: phase, sessionCount: count, detail: details[phase]!, changedAt: changedAt)
+            let finished = sessions.compactMap { $0.readFailed ? nil : $0.signal.lastFinishedAt }.max()
+            result[provider] = WorkActivity(phase: phase, sessionCount: count, detail: details[phase]!, changedAt: changedAt,
+                                            lastFinishedAt: finished)
         }
         previous = result
         return result
