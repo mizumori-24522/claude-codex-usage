@@ -484,6 +484,8 @@ final class Settings: ObservableObject {
     /// The weekly breakdown and credits change rarely, so the widget leaves them to the panel by default.
     @Published var showWidgetDetails: Bool { didSet { d.set(showWidgetDetails, forKey: "showWidgetDetails") } }
     @Published var workSceneStyle: WorkSceneStyle { didSet { d.set(workSceneStyle.rawValue, forKey: "workSceneStyle") } }
+    /// Also watch the ChatGPT app (ChatGPT Work, cloud chats) through Accessibility.
+    @Published var detectChatGPTApp: Bool { didSet { d.set(detectChatGPTApp, forKey: "detectChatGPTApp") } }
     /// The Claude character's colour steps (editable in the panel).
     @Published var characterSteps: [CharacterStep] {
         didSet {
@@ -521,6 +523,7 @@ final class Settings: ObservableObject {
         showWorkScene = d.bool(forKey: "showWorkScene")
         showWidgetDetails = d.bool(forKey: "showWidgetDetails")
         workSceneStyle = WorkSceneStyle(rawValue: d.string(forKey: "workSceneStyle") ?? "") ?? .desk
+        detectChatGPTApp = d.bool(forKey: "detectChatGPTApp")
         let steps = d.data(forKey: "characterSteps").flatMap { try? JSONDecoder().decode([CharacterStep].self, from: $0) }
             ?? CharacterScale.defaults
         characterSteps = steps

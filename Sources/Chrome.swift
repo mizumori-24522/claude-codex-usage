@@ -620,6 +620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         widget = WidgetController(store: store, settings: settings)
         status = StatusController(store: store, settings: settings, widget: widget)
         widget.contextHandler = { [weak self] view in self?.status.showPanel(from: view) }
+        WorkActivityStore.shared.watchChatGPT = { Settings.shared.detectChatGPTApp }
         // `--show-panel [settings]` opens the panel at launch (handy for screenshots).
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--show-panel") {
@@ -669,6 +670,17 @@ enum Main {
         if args.count >= 3, args[1] == "--render" { DevTools.renderPreviews(to: args[2]); return }
         if args.count >= 2, args[1] == "--dump" { DevTools.dump(); return }
         if args.contains("--offline") { UsageStore.offline = true }
+        if args.count >= 2, args[1] == "--chatgpt" {
+            // Development check: what the ChatGPT watcher sees, every 2 seconds.
+            let rounds = args.count >= 3 ? Int(args[2]) ?? 10 : 10
+            for _ in 0..<rounds {
+                let start = Date()
+                let state = ChatGPTWatcher.check()
+                print(Fmt.format(Date(), "HH:mm:ss"), state, String(format: "(%.0f ms)", Date().timeIntervalSince(start) * 1000))
+                Thread.sleep(forTimeInterval: 2)
+            }
+            return
+        }
         if args.count >= 2, args[1] == "--test-cli" { DevTools.testCLIRefresh(); return }
         if args.count >= 3, args[1] == "--menubar" { DevTools.renderMenuBarStyles(to: args[2]); return }
         if args.count >= 3, args[1] == "--character" { DevTools.renderCharacter(to: args[2]); return }

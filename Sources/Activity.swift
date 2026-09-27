@@ -46,6 +46,14 @@ final class WorkActivityStore: ObservableObject {
     private var seenAt: [Provider: Date] = [:]
     private var activationObserver: NSObjectProtocol?
 
+    /// What the ChatGPT app shows (when that detection is switched on).
+    @Published private(set) var chatGPT: ChatGPTWatcher.State = .off
+    private var chatGPTBusySince: Date?
+    private var chatGPTFinishedAt: Date?
+    private var tick = 0
+    /// Whether to watch the ChatGPT app; supplied by the app so this file stays free of settings.
+    var watchChatGPT: () -> Bool = { false }
+
     static func bundleID(_ p: Provider) -> String { p == .codex ? "com.openai.codex" : "com.anthropic.claudefordesktop" }
 
     /// Marks completions as seen, e.g. after a click on the widget.
@@ -54,9 +62,32 @@ final class WorkActivityStore: ObservableObject {
         publish()
     }
 
+    /// Folds what the ChatGPT app shows into Codex: its cloud work leaves no local log.
+    private func withChatGPT(_ base: [Provider: WorkActivity], now: Date) -> [Provider: WorkActivity] {
+        guard var codex = base[.codex] else { return base }
+        var result = base
+        if chatGPT == .busy, codex.phase != .working, codex.phase != .waiting {
+            codex.phase = .working
+            codex.detail = "ChatGPT アプリで作業中"
+            codex.changedAt = chatGPTBusySince ?? now
+            codex.sessionCount = max(codex.sessionCount, 1)
+        } else if let finished = chatGPTFinishedAt, now.timeIntervalSince(finished) <= 5,
+                  codex.phase != .working, codex.phase != .waiting {
+            codex.phase = .finished
+            codex.detail = "ChatGPT アプリの作業が完了しました"
+            codex.changedAt = finished
+        }
+        if let finished = chatGPTFinishedAt, finished > (codex.lastFinishedAt ?? .distantPast) {
+            codex.lastFinishedAt = finished
+        }
+        result[.codex] = codex
+        return result
+    }
+
     private func publish() {
         let now = Date()
         let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier?.lowercased()
+        let latest = withChatGPT(self.latest, now: now)
         var merged = latest
         for (p, activity) in latest {
             var a = activity
@@ -101,16 +132,36 @@ final class WorkActivityStore: ObservableObject {
                             : name == "claude" || bundle == "com.anthropic.claudefordesktop"
                     }
                 })
-                let result = await withCheckedContinuation { continuation in
-                    queue.async { continuation.resume(returning: scanner.poll(guiProviders: guiProviders)) }
+                guard let owner = self else { break }
+                owner.tick += 1
+                let watchEnabled = owner.watchChatGPT()
+                let watchApp = watchEnabled && owner.tick % 2 == 0
+                let (result, appState) = await withCheckedContinuation { continuation in
+                    queue.async {
+                        continuation.resume(returning: (scanner.poll(guiProviders: guiProviders),
+                                                        watchApp ? ChatGPTWatcher.check() : nil))
+                    }
                 }
                 guard !Task.isCancelled, let self else { break }
+                if !watchEnabled {
+                    self.updateChatGPT(.off)
+                } else if let appState {
+                    self.updateChatGPT(appState)
+                }
                 self.latest = result
                 self.publish()
                 // The scanner runs off the main thread; one scan at a time, even after a slow read.
                 do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { break }
             }
         }
+    }
+
+    private func updateChatGPT(_ state: ChatGPTWatcher.State) {
+        let now = Date()
+        if state == .busy, chatGPT != .busy { chatGPTBusySince = now }
+        // Busy → anything else (idle, app closed) means that reply finished.
+        if chatGPT == .busy, state != .busy, state != .off { chatGPTFinishedAt = now }
+        if chatGPT != state { chatGPT = state }
     }
 
     func stop() {

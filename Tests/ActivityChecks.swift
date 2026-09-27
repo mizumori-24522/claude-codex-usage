@@ -2,7 +2,7 @@ import Foundation
 
 // Standalone deterministic checks, with no API calls or real conversation fixtures.
 // swiftc -module-cache-path /tmp/usage-activity-module-cache -swift-version 5 \
-//   -parse-as-library Sources/Model.swift Sources/Activity.swift Tests/ActivityChecks.swift \
+//   -parse-as-library Sources/Model.swift Sources/Activity.swift Sources/ChatGPTWatcher.swift Tests/ActivityChecks.swift \
 //   -framework AppKit -o /tmp/usage-activity-checks && /tmp/usage-activity-checks
 // Service.swift is deliberately excluded; process inspection is stubbed per scanner below.
 

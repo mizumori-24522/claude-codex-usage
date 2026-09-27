@@ -117,6 +117,8 @@ private struct SettingsTab: View {
                             ForEach(WorkSceneStyle.allCases, id: \.self) { Text($0.label).tag($0) }
                         }.segmented()
                     }
+                    Row("ChatGPT アプリの作業も検知") { Toggle("", isOn: $settings.detectChatGPTApp).switchStyle() }
+                    if settings.detectChatGPTApp { ChatGPTAccessRow() }
                 }
                 Row("内訳・クレジット") { Toggle("", isOn: $settings.showWidgetDetails).switchStyle() }
                 if settings.showWidget && settings.placement == .desktop {
@@ -253,6 +255,50 @@ private struct CharacterScaleEditor: View {
                     guard let i = settings.characterSteps.firstIndex(where: { $0.id == id }) else { return }
                     settings.characterSteps[i].upTo = value
                 })
+    }
+}
+
+/// Permission and live status for watching the ChatGPT app.
+private struct ChatGPTAccessRow: View {
+    @ObservedObject private var activity = WorkActivityStore.shared
+
+    var body: some View {
+        // Re-checks the permission every couple of seconds while the panel is open.
+        TimelineView(.periodic(from: .now, by: 2)) { _ in
+            VStack(alignment: .leading, spacing: 6) {
+                if ChatGPTWatcher.isTrusted {
+                    Label(status, systemImage: activity.chatGPT == .busy ? "circle.dotted" : "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(activity.chatGPT == .busy ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                } else {
+                    Text("アクセシビリティの許可が必要です。「許可する」を押し、システム設定で「Claude & Codex Usage」をオンにしてください。")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Button("許可する") { ChatGPTWatcher.requestPermission() }
+                        Button("システム設定を開く") { ChatGPTWatcher.openAccessibilitySettings() }
+                    }
+                    .controlSize(.small)
+                }
+                Text("ChatGPT アプリで開いているチャットの「処理中」の表示だけを見ます。タイトルや内容は読みません。")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.primary.opacity(0.04)))
+        }
+    }
+
+    private var status: String {
+        switch activity.chatGPT {
+        case .busy: return "許可済み ・ ChatGPT アプリ: 処理中"
+        case .idle: return "許可済み ・ ChatGPT アプリ: 待機中"
+        case .notRunning: return "許可済み ・ ChatGPT アプリは起動していません"
+        case .needsPermission, .off: return "許可済み ・ 確認しています…"
+        }
     }
 }
 
