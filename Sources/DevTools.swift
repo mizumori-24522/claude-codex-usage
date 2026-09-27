@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ImageIO
 
 /// Build-time helpers: `--icon <dir>` writes the iconset, `--render <dir>` writes card previews,
 /// `--dump` fetches once and prints the numbers (never the token), `--test-cli` exercises the token refresh.
@@ -173,6 +174,58 @@ enum DevTools {
         }
         NSGraphicsContext.restoreGraphicsState()
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+    }
+
+    /// Deterministic animation previews, without fetching usage or changing preferences.
+    static func renderCharacterAnimation(to dir: String) {
+        let url = URL(fileURLWithPath: dir)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let st = ProviderState(provider: .claude, snapshot: sample(.claude, five: 40, week: 60),
+                               error: nil, loading: false, stale: false, now: Date(),
+                               mode: .remaining, colorMode: .level)
+        let poses = [StatusIcon.CharacterPose.resting, .blink] + StatusIcon.CharacterPose.loading
+        let size = NSSize(width: 500, height: 68)
+        var frames: [CGImage] = []
+        for (index, pose) in poses.enumerated() {
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+                                             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return }
+            rep.size = size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            var column = 0
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                for style in [MenuBarMode.character, .characterNumbers] {
+                    NSAppearance(named: appearance)!.performAsCurrentDrawingAppearance {
+                        let x = CGFloat(column) * 125
+                        (appearance == .aqua ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.17, alpha: 1)).setFill()
+                        NSRect(x: x, y: 0, width: 125, height: size.height).fill()
+                        let title = "\(appearance == .aqua ? "ライト" : "ダーク")・\(style == .character ? "キャラ" : "＋数字")"
+                        (title as NSString).draw(at: NSPoint(x: x + 12, y: 46), withAttributes: [
+                            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor])
+                        let img = StatusIcon.image(for: [st], style: style, display: .remaining,
+                                                   characterColor: .claude, pose: pose)
+                        img.draw(in: NSRect(x: x + 16, y: 12, width: img.size.width, height: img.size.height))
+                    }
+                    column += 1
+                }
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            try? rep.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("frame-\(index).png"))
+            if let image = rep.cgImage { frames.append(image) }
+        }
+        // Pause, blink, then show three fetch cycles. Runtime idle uses a seven-second pause.
+        let sequence: [(Int, Double)] = [(0, 2), (1, 0.14), (0, 1)]
+            + (0..<24).map { (2 + $0 % 8, 0.12) } + [(0, 1)]
+        guard frames.count == poses.count,
+              let destination = CGImageDestinationCreateWithURL(url.appendingPathComponent("animation.gif") as CFURL,
+                  "com.compuserve.gif" as CFString, sequence.count, nil) else { return }
+        CGImageDestinationSetProperties(destination, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+        for (index, delay) in sequence {
+            CGImageDestinationAddImage(destination, frames[index],
+                [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay]] as CFDictionary)
+        }
+        if !CGImageDestinationFinalize(destination) { print("Could not write animation preview") }
     }
 
     static func dump() {

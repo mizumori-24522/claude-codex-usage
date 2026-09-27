@@ -326,19 +326,39 @@ enum StatusIcon {
     // MARK: Pixel mascot
 
     /// Claude Code's pixel character: `#` body, `o` eye.
-    static let clawd = ["..#########..",
-                        "###o#####o###",
-                        "#############",
-                        "..#########..",
-                        "..#########..",
-                        "...#.#.#.#...",
-                        "...#.#.#.#..."]
-    static let cell: CGFloat = 2
+    static let clawd = ["..############..",
+                        "..############..",
+                        "..##o######o##..",
+                        "..##o######o##..",
+                        "################",
+                        "################",
+                        "..############..",
+                        "..############..",
+                        "...#.#....#.#...",
+                        "...#.#....#.#..."]
+    // Three device pixels per cell on Retina; the taller head fits the 22-point menu bar.
+    static let cell: CGFloat = 1.5
     static var characterSize: NSSize { NSSize(width: CGFloat(clawd[0].count) * cell, height: CGFloat(clawd.count) * cell) }
+
+    /// Integer-point motion keeps the pixel edges crisp at menu bar scale.
+    struct CharacterPose {
+        var lift: CGFloat = 0
+        var stepping = false
+        var eyesClosed = false
+
+        static let resting = CharacterPose()
+        static let blink = CharacterPose(eyesClosed: true)
+        static let loading: [CharacterPose] = [
+            .init(stepping: true), .init(lift: 1, stepping: true),
+            .init(lift: 2), .init(lift: 2), .init(lift: 1),
+            .resting, .init(stepping: true), .resting
+        ]
+    }
 
     /// Draws the character as a gauge: the legs always carry the colour, and the body fills
     /// bottom-up with `fraction` like a water level over a faint tint of the same colour.
-    static func drawCharacter(at o: NSPoint, fraction: Double, color: NSColor, dimmed: Bool) {
+    static func drawCharacter(at o: NSPoint, fraction: Double, color: NSColor, dimmed: Bool,
+                              pose: CharacterPose = .resting) {
         let rows = clawd.count, legRows = 2
         let bodyBottom = o.y + CGFloat(legRows) * cell
         let fillTop = bodyBottom + CGFloat(rows - legRows) * cell * CGFloat(min(max(fraction, 0), 1))
@@ -349,40 +369,41 @@ enum StatusIcon {
             let isLeg = r >= rows - legRows
             for (c, ch) in line.enumerated() where ch != "." {
                 let x = o.x + CGFloat(c) * cell
-                if ch == "o" {
-                    (y + cell / 2 < fillTop ? NSColor(white: 0.08, alpha: 1) : NSColor.labelColor.withAlphaComponent(0.85)).setFill()
-                    NSRect(x: x, y: y, width: cell, height: cell).fill(using: .sourceOver)
-                    continue
-                }
                 let split = isLeg ? cell : min(max(fillTop - y, 0), cell)
                 if split > 0 {
                     solid.setFill()
-                    NSRect(x: x, y: y, width: cell, height: split).fill(using: .sourceOver)
+                    let foot = pose.stepping && r == rows - 1 && (c == 3 || c == 10) ? CGFloat(1) : 0
+                    NSRect(x: x, y: y - foot, width: cell, height: split + foot).fill(using: .sourceOver)
                 }
                 if split < cell {
                     faint.setFill()
                     NSRect(x: x, y: y + split, width: cell, height: cell - split).fill(using: .sourceOver)
                 }
+                if ch == "o", !pose.eyesClosed || r == 3 {
+                    (y + cell / 2 < fillTop ? NSColor(white: 0.08, alpha: 1) : NSColor.labelColor.withAlphaComponent(0.85)).setFill()
+                    NSRect(x: x, y: y, width: cell,
+                           height: pose.eyesClosed ? 1 : cell).fill(using: .sourceOver)
+                }
             }
         }
     }
 
-    static func character(fraction: Double, color: NSColor, dimmed: Bool, frame: Int) -> NSImage {
+    static func character(fraction: Double, color: NSColor, dimmed: Bool, pose: CharacterPose = .resting) -> NSImage {
         let size = characterSize
-        return NSImage(size: NSSize(width: size.width, height: 18), flipped: false) { _ in
-            drawCharacter(at: NSPoint(x: 0, y: 2 + CGFloat(frame)), fraction: fraction, color: color, dimmed: dimmed)
+        return NSImage(size: NSSize(width: size.width, height: 22), flipped: false) { _ in
+            drawCharacter(at: NSPoint(x: 0, y: (22 - size.height) / 2 + pose.lift), fraction: fraction, color: color, dimmed: dimmed, pose: pose)
             return true
         }
     }
 
     /// The character followed by 5-hour and weekly figures in two lines.
-    static func characterNumbers(fraction: Double, color: NSColor, dimmed: Bool, frame: Int, rows: [Row]) -> NSImage {
+    static func characterNumbers(fraction: Double, color: NSColor, dimmed: Bool, pose: CharacterPose = .resting, rows: [Row]) -> NSImage {
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)]
         let textW = rows.map { ceil(($0.text as NSString).size(withAttributes: attrs).width) }.max() ?? 0
         let size = characterSize, h: CGFloat = 22, gap: CGFloat = 4, dot: CGFloat = 6
         let w = size.width + gap + dot + textW + 1
         return NSImage(size: NSSize(width: w, height: h), flipped: false) { _ in
-            drawCharacter(at: NSPoint(x: 0, y: (h - size.height) / 2 + CGFloat(frame)), fraction: fraction, color: color, dimmed: dimmed)
+            drawCharacter(at: NSPoint(x: 0, y: (h - size.height) / 2 + pose.lift), fraction: fraction, color: color, dimmed: dimmed, pose: pose)
             let rowH = h / CGFloat(rows.count)
             for (i, r) in rows.enumerated() {
                 let cy = h - rowH * (CGFloat(i) + 0.5)
@@ -407,7 +428,7 @@ enum StatusIcon {
     /// Builds the status item image for the chosen style.
     @MainActor
     static func image(for states: [ProviderState], style: MenuBarMode, display: DisplayMode,
-                      characterColor: CharacterColor = .level, frame: Int = 0) -> NSImage {
+                      characterColor: CharacterColor = .level, pose: CharacterPose = .resting) -> NSImage {
         let single = states.count == 1
         func dimmed(_ p: ProviderState) -> Bool { p.snapshot == nil || (p.error != nil && !p.softError) }
         func row(_ p: ProviderState, _ m: Metric) -> Row {
@@ -423,9 +444,9 @@ enum StatusIcon {
             let m = p.fiveHour
             let tint = characterTint(m, characterColor)
             if style == .character {
-                return character(fraction: m.fraction(display), color: tint, dimmed: dimmed(p), frame: frame)
+                return character(fraction: m.fraction(display), color: tint, dimmed: dimmed(p), pose: pose)
             }
-            return characterNumbers(fraction: m.fraction(display), color: tint, dimmed: dimmed(p), frame: frame,
+            return characterNumbers(fraction: m.fraction(display), color: tint, dimmed: dimmed(p), pose: pose,
                                     rows: [row(p, p.fiveHour), row(p, p.weekly)])
         case .bars:
             return bars(rows, leading: single ? states[0].provider : nil)
@@ -473,28 +494,44 @@ final class StatusController: NSObject, NSMenuDelegate {
         menu.delegate = self
         item.menu = menu
         item.button?.imagePosition = .imageOnly
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(accessibilityChanged),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         update()
     }
 
-    private var hopTimer: Timer?
-    private var frame = 0
+    private enum Activity { case still, idle, loading }
+    private var activity = Activity.still
+    private var animationTimer: Timer?
+    private var animationStep = 0
+    private var pose = StatusIcon.CharacterPose.resting
+
+    deinit {
+        animationTimer?.invalidate()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    @objc private func accessibilityChanged(_ notification: Notification) { update() }
 
     func update() {
         let states = store.states(settings, providers: settings.menuBarProviders)
-        // The character hops while its numbers are being fetched.
-        let hopping = settings.menuBarMode.isCharacter && states.contains { $0.loading }
-        if hopping, hopTimer == nil {
-            hopTimer = Timer.scheduledTimer(withTimeInterval: 0.16, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.frame ^= 1
-                    self.render()
-                }
-            }
-        } else if !hopping {
-            hopTimer?.invalidate()
-            hopTimer = nil
-            frame = 0
+        let claude = states.first { $0.provider == .claude }
+        let next: Activity
+        if !settings.menuBarMode.isCharacter || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            next = .still
+        } else if claude?.loading == true {
+            next = .loading
+        } else if let claude, claude.snapshot != nil, claude.error == nil || claude.softError {
+            next = .idle
+        } else {
+            next = .still
+        }
+        if next != activity {
+            animationTimer?.invalidate()
+            animationTimer = nil
+            activity = next
+            animationStep = 0
+            pose = .resting
+            scheduleAnimation()
         }
         render()
         item.button?.toolTip = store.states(settings, providers: settings.activeProviders).map { p in
@@ -502,11 +539,37 @@ final class StatusController: NSObject, NSMenuDelegate {
         }.joined(separator: "\n")
     }
 
+    /// One-shot idle timers avoid continuous redraws between the occasional blinks.
+    private func scheduleAnimation() {
+        guard activity != .still else { return }
+        let delay: TimeInterval = activity == .loading ? 0.12 : (pose.eyesClosed ? 0.14 : 7)
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] timer in
+            Task { @MainActor in
+                guard let self, self.animationTimer === timer else { return }
+                self.animationTimer = nil
+                switch self.activity {
+                case .loading:
+                    self.pose = StatusIcon.CharacterPose.loading[self.animationStep]
+                    self.animationStep = (self.animationStep + 1) % StatusIcon.CharacterPose.loading.count
+                case .idle:
+                    self.pose = self.pose.eyesClosed ? .resting : .blink
+                case .still:
+                    return
+                }
+                self.render()
+                self.scheduleAnimation()
+            }
+        }
+        timer.tolerance = delay > 1 ? 0.5 : 0.01
+        animationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
     private func render() {
         guard let button = item.button else { return }
         let states = store.states(settings, providers: settings.menuBarProviders)
         button.image = StatusIcon.image(for: states, style: settings.menuBarMode, display: settings.displayMode,
-                                        characterColor: settings.characterColor, frame: frame)
+                                        characterColor: settings.characterColor, pose: pose)
         button.title = ""
     }
 
@@ -669,6 +732,7 @@ enum Main {
         if args.count >= 2, args[1] == "--test-cli" { DevTools.testCLIRefresh(); return }
         if args.count >= 3, args[1] == "--menubar" { DevTools.renderMenuBarStyles(to: args[2]); return }
         if args.count >= 3, args[1] == "--character" { DevTools.renderCharacter(to: args[2]); return }
+        if args.count >= 3, args[1] == "--character-animation" { DevTools.renderCharacterAnimation(to: args[2]); return }
 
         let app = NSApplication.shared
         let delegate = AppDelegate()
