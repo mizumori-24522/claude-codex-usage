@@ -853,12 +853,38 @@ struct WidgetRoot: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var settings: Settings
     @ObservedObject var activity = WorkActivityStore.shared
+    @ObservedObject var hover = WidgetHover.shared
 
     var body: some View {
-        WidgetContents(items: store.states(settings), size: settings.widgetSize,
-                       workStates: settings.showWorkScene ? activity.states : nil,
-                       characterColor: settings.characterColor, showDetails: settings.showWidgetDetails,
-                       sceneStyle: settings.workSceneStyle)
+        let contents = WidgetContents(items: store.states(settings), size: settings.widgetSize,
+                                      workStates: settings.showWorkScene ? activity.states : nil,
+                                      characterColor: settings.characterColor, showDetails: settings.showWidgetDetails,
+                                      sceneStyle: settings.workSceneStyle)
+        Group {
+            if abs(settings.widgetZoom - 1) < 0.001 { contents } else { contents.magnified(settings.widgetZoom) }
+        }
+        // A grip in the corner, shown on hover, says the widget can be resized by dragging.
+        .overlay(alignment: .bottomTrailing) {
+            ResizeGrip()
+                .frame(width: 11, height: 11)
+                .padding(9 * max(1, settings.widgetZoom * 0.9))
+                .opacity(hover.hovering || hover.resizing ? 1 : 0)
+                .animation(.easeOut(duration: 0.15), value: hover.hovering)
+        }
+    }
+}
+
+struct ResizeGrip: View {
+    var body: some View {
+        Canvas { ctx, size in
+            for k in 1...3 {
+                let d = CGFloat(k) * size.width / 3
+                var p = Path()
+                p.move(to: CGPoint(x: size.width - d, y: size.height))
+                p.addLine(to: CGPoint(x: size.width, y: size.height - d))
+                ctx.stroke(p, with: .color(.secondary), style: StrokeStyle(lineWidth: 1.3, lineCap: .round))
+            }
+        }
     }
 }
 

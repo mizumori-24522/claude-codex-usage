@@ -494,6 +494,9 @@ final class Settings: ObservableObject {
         }
     }
     @Published var widgetSize: WidgetSize  { didSet { d.set(widgetSize.rawValue, forKey: "widgetSize") } }
+    /// Free scaling on top of the size preset, set by dragging the widget's corner or in the panel.
+    @Published var widgetZoom: Double      { didSet { d.set(widgetZoom, forKey: "widgetZoom") } }
+    static let zoomRange: ClosedRange<Double> = 0.7...2.0
     @Published var placement: Placement    { didSet { d.set(placement.rawValue, forKey: "placement") } }
     @Published var displayMode: DisplayMode { didSet { d.set(displayMode.rawValue, forKey: "displayMode") } }
     @Published var glassStyle: GlassStyle  { didSet { d.set(glassStyle.rawValue, forKey: "glassStyle") } }
@@ -515,7 +518,7 @@ final class Settings: ObservableObject {
     }
 
     init() {
-        d.register(defaults: ["showWidget": true, "showWorkScene": true, "showWidgetDetails": false, "widgetSize": "medium", "placement": "desktop",
+        d.register(defaults: ["widgetZoom": 1.0, "showWidget": true, "showWorkScene": true, "showWidgetDetails": false, "widgetSize": "medium", "placement": "desktop",
                               "displayMode": "used", "glassStyle": "regular", "menuBarMode": "session",
                               "intervalMinutes": 5, "autoCLIRefresh": true, "providers": "both", "colorMode": "level",
                               "menuBarClaudeOnly": true, "characterColor": "level"])
@@ -529,6 +532,7 @@ final class Settings: ObservableObject {
         characterSteps = steps
         CharacterScale.current = steps
         widgetSize = WidgetSize(rawValue: d.string(forKey: "widgetSize") ?? "") ?? .medium
+        widgetZoom = min(max(d.double(forKey: "widgetZoom"), Self.zoomRange.lowerBound), Self.zoomRange.upperBound)
         placement = Placement(rawValue: d.string(forKey: "placement") ?? "") ?? .desktop
         displayMode = DisplayMode(rawValue: d.string(forKey: "displayMode") ?? "") ?? .used
         glassStyle = GlassStyle(rawValue: d.string(forKey: "glassStyle") ?? "") ?? .regular

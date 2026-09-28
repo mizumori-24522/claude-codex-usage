@@ -100,6 +100,23 @@ private struct SettingsTab: View {
                         Text("小").tag(WidgetSize.small); Text("中").tag(WidgetSize.medium); Text("大").tag(WidgetSize.large)
                     }.segmented()
                 }
+                Row("拡大率") {
+                    HStack(spacing: 6) {
+                        Slider(value: $settings.widgetZoom, in: Settings.zoomRange, step: 0.05)
+                            .frame(width: 110)
+                            .controlSize(.small)
+                        Text("\(Int((settings.widgetZoom * 100).rounded()))%")
+                            .font(.system(size: 11))
+                            .monospacedDigit()
+                            .frame(width: 36, alignment: .trailing)
+                        Button("100%") { settings.widgetZoom = 1 }
+                            .controlSize(.mini)
+                            .disabled(abs(settings.widgetZoom - 1) < 0.001)
+                    }
+                }
+                Text("ウィジェットの右下の角をドラッグしても変えられます")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
                 Row("配置") {
                     Picker("", selection: $settings.placement) {
                         Text("デスクトップ").tag(Placement.desktop); Text("最前面").tag(Placement.floating)
@@ -271,7 +288,13 @@ private struct ChatGPTAccessRow: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(activity.chatGPT == .busy ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
                 } else {
-                    Text("アクセシビリティの許可が必要です。「許可する」を押し、システム設定で「Claude & Codex Usage」をオンにしてください。")
+                    Text("アクセシビリティの許可が必要です。「許可する」を押し、システム設定で「ClaudeCodexUsage」をオンにしてください。")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("すでにオンになっている場合：アプリを更新すると許可が効かなくなります。一度オフにしてからオンに戻してください（それでも変わらなければ「−」で削除して「＋」で追加し直します）。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
                         .font(.system(size: 10.5))
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
