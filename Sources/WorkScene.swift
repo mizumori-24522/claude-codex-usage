@@ -41,6 +41,8 @@ struct WorkSceneFooter: View {
     var compact = false
     /// A fixed clock for image/GIF previews; never used to manufacture live activity.
     var previewDate: Date? = nil
+    /// Free resets left per service, shown as 🎫 beside the character.
+    var tickets: [Provider: ResetTickets] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,7 +53,8 @@ struct WorkSceneFooter: View {
                                   activity: states[provider] ?? WorkActivity(phase: .unknown, sessionCount: 0,
                                                                            detail: "作業状態をまだ検出していません", changedAt: .distantPast),
                                   tint: tints[provider] ?? (provider == .claude ? CharacterTint(Palette.claude) : .codex),
-                                  style: style, compact: compact, previewDate: previewDate)
+                                  style: style, compact: compact, previewDate: previewDate,
+                                  tickets: tickets[provider])
                     .frame(maxWidth: .infinity)
                 }
             }
@@ -70,6 +73,7 @@ private struct WorkSceneTile: View {
     var style: WorkSceneStyle
     var compact: Bool
     var previewDate: Date?
+    var tickets: ResetTickets? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var visibility = SceneVisibility.shared
 
@@ -136,8 +140,10 @@ private struct WorkSceneTile: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(provider.name)、\(label)\(unseen != nil ? "、未確認" : "")\(activity.sessionCount > 1 ? "、\(activity.sessionCount)セッション" : "")")
-        .help(activity.detail)
+        .accessibilityLabel("\(provider.name)、\(label)\(tickets.map { "、無料リセット\($0.count)回" } ?? "")\(unseen != nil ? "、未確認" : "")\(activity.sessionCount > 1 ? "、\(activity.sessionCount)セッション" : "")")
+        .help(activity.detail + (tickets.map { t in
+            "\n🎫 無料リセット あと\(t.count)回" + (t.nextExpiry.map { "（次の期限 \(Fmt.format($0, "M/d H:mm"))）" } ?? "")
+        } ?? ""))
     }
 
     @ViewBuilder private func scene(at date: Date) -> some View {
@@ -152,6 +158,9 @@ private struct WorkSceneTile: View {
         }
             .frame(height: compact ? 36 : 60)
             .accessibilityHidden(true)
+            .overlay(alignment: .topLeading) {
+                if let tickets { TicketBadge(tickets: tickets, compact: compact).offset(y: compact ? -2 : 2) }
+            }
     }
 }
 

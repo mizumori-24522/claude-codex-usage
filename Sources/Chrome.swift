@@ -21,10 +21,13 @@ final class WidgetPanel: NSPanel {
 }
 
 /// Drag anywhere to move, double-click to refresh, right-click for the menu.
-/// The bottom-right area that resizes the widget, and its cursor.
+/// The bottom corners that resize the widget, and their cursors.
 enum WidgetGrip {
     static let size: CGFloat = 22
-    static let cursor = NSCursor.frameResize(position: .bottomRight, directions: .all)
+    enum Corner { case left, right }
+    static func cursor(_ c: Corner) -> NSCursor {
+        NSCursor.frameResize(position: c == .left ? .bottomLeft : .bottomRight, directions: .all)
+    }
 }
 
 /// Hover and resize state of the widget, for the corner grip.
@@ -39,19 +42,21 @@ final class DragHostingView<Content: View>: NSHostingView<Content> {
     var onDoubleClick: (() -> Void)?
     var onPress: (() -> Void)?
     var onContextClick: ((NSView) -> Void)?
-    /// Resizing from the bottom-right corner reports the size ratio relative to where the drag began.
-    var onResizeBegan: (() -> Void)?
+    /// Resizing from a bottom corner reports the size ratio relative to where the drag began.
+    var onResizeBegan: ((WidgetGrip.Corner) -> Void)?
     var onResize: ((CGFloat) -> Void)?
     var onResizeEnded: (() -> Void)?
 
-    private var resizeStart: (mouse: NSPoint, size: NSSize)?
+    private var resizeStart: (mouse: NSPoint, size: NSSize, corner: WidgetGrip.Corner)?
     private var tracking: NSTrackingArea?
 
-    private func inGrip(_ event: NSEvent) -> Bool {
+    private func grip(_ event: NSEvent) -> WidgetGrip.Corner? {
         let p = convert(event.locationInWindow, from: nil)
-        let nearRight = p.x > bounds.maxX - WidgetGrip.size
         let nearBottom = isFlipped ? p.y > bounds.maxY - WidgetGrip.size : p.y < bounds.minY + WidgetGrip.size
-        return nearRight && nearBottom
+        guard nearBottom else { return nil }
+        if p.x > bounds.maxX - WidgetGrip.size { return .right }
+        if p.x < bounds.minX + WidgetGrip.size { return .left }
+        return nil
     }
 
     override func updateTrackingAreas() {
@@ -73,17 +78,17 @@ final class DragHostingView<Content: View>: NSHostingView<Content> {
     }
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
-        if resizeStart == nil { (inGrip(event) ? WidgetGrip.cursor : NSCursor.arrow).set() }
+        if resizeStart == nil { (grip(event).map(WidgetGrip.cursor) ?? NSCursor.arrow).set() }
     }
 
     override func mouseDown(with event: NSEvent) {
         onPress?()
         if event.modifierFlags.contains(.control) { return rightMouseDown(with: event) }
-        if inGrip(event), let window {
-            resizeStart = (NSEvent.mouseLocation, window.frame.size)
+        if let corner = grip(event), let window {
+            resizeStart = (NSEvent.mouseLocation, window.frame.size, corner)
             WidgetHover.shared.resizing = true
-            WidgetGrip.cursor.set()
-            onResizeBegan?()
+            WidgetGrip.cursor(corner).set()
+            onResizeBegan?(corner)
             return
         }
         if event.clickCount >= 2 { onDoubleClick?(); return }
@@ -92,7 +97,8 @@ final class DragHostingView<Content: View>: NSHostingView<Content> {
     override func mouseDragged(with event: NSEvent) {
         guard let start = resizeStart else { return super.mouseDragged(with: event) }
         let now = NSEvent.mouseLocation
-        let byWidth = (start.size.width + (now.x - start.mouse.x)) / start.size.width
+        let dx = start.corner == .left ? start.mouse.x - now.x : now.x - start.mouse.x
+        let byWidth = (start.size.width + dx) / start.size.width
         let byHeight = (start.size.height + (start.mouse.y - now.y)) / start.size.height
         // Follow whichever direction the pointer moved more; the widget keeps its proportions.
         onResize?(abs(byWidth - 1) >= abs(byHeight - 1) ? byWidth : byHeight)
@@ -148,8 +154,9 @@ final class WidgetController: NSObject {
         panel.orderFrontRegardless()
     }
 
-    /// Set while the corner is being dragged; the widget then grows from its top-left corner.
+    /// Set while a corner is being dragged; the widget then grows away from the opposite top corner.
     private var resizeStartZoom: Double?
+    private var resizeCorner: WidgetGrip.Corner?
     private var raised = false
     private var outsideClickMonitor: Any?
 
@@ -183,7 +190,8 @@ final class WidgetController: NSObject {
 
         let screen = NSScreen.screens.first { $0.frame.intersects(old) } ?? NSScreen.main
         if let vf = screen?.visibleFrame {
-            if resizeStartZoom == nil, abs(vf.maxX - old.maxX) < 80 { frame.origin.x = old.maxX - size.width }
+            let anchorRight = resizeStartZoom == nil ? abs(vf.maxX - old.maxX) < 80 : resizeCorner == .left
+            if anchorRight { frame.origin.x = old.maxX - size.width }
             frame.origin.x = min(max(frame.origin.x, vf.minX), vf.maxX - size.width)
             frame.origin.y = min(max(frame.origin.y, vf.minY), vf.maxY - size.height)
         }
@@ -195,7 +203,10 @@ final class WidgetController: NSObject {
         let host = DragHostingView(rootView: WidgetRoot(store: store, settings: settings))
         host.sizingOptions = [.intrinsicContentSize]
         host.onDoubleClick = { [weak self] in self?.store.refresh(manual: true) }
-        host.onResizeBegan = { [weak self] in self?.resizeStartZoom = self?.settings.widgetZoom }
+        host.onResizeBegan = { [weak self] corner in
+            self?.resizeStartZoom = self?.settings.widgetZoom
+            self?.resizeCorner = corner
+        }
         host.onResize = { [weak self] ratio in
             guard let self, let start = self.resizeStartZoom else { return }
             let range = Settings.zoomRange
@@ -203,7 +214,7 @@ final class WidgetController: NSObject {
             let stepped = (zoom * 100).rounded() / 100
             if abs(stepped - self.settings.widgetZoom) >= 0.01 { self.settings.widgetZoom = stepped }
         }
-        host.onResizeEnded = { [weak self] in self?.resizeStartZoom = nil }
+        host.onResizeEnded = { [weak self] in self?.resizeStartZoom = nil; self?.resizeCorner = nil }
         host.onPress = { [weak self] in
             self?.raise()
             WorkActivityStore.shared.markSeen()   // a click on the widget acknowledges finished work

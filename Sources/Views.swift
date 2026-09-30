@@ -184,6 +184,62 @@ struct ProviderState: Identifiable {
         Metric(title: provider == .claude ? "週間・全モデル" : "週間制限", kind: .weekly, window: snapshot?.sevenDay,
                provider: provider, colorMode: colorMode, now: now)
     }
+    var tickets: ResetTickets? {
+        guard let n = snapshot?.resetCredits, n > 0 else { return nil }
+        return ResetTickets(provider: provider, count: n,
+                            nextExpiry: snapshot?.resetCreditExpiries?.first { $0 > now }, now: now)
+    }
+}
+
+/// Free reset grants still available, and how close the soonest one is to expiring.
+struct ResetTickets: Equatable {
+    var provider: Provider
+    var count: Int
+    var nextExpiry: Date?
+    var now: Date
+
+    enum Urgency { case normal, soon, urgent }
+    /// A week out turns orange, the last two days red.
+    var urgency: Urgency {
+        guard let e = nextExpiry else { return .normal }
+        let left = e.timeIntervalSince(now)
+        return left < 2 * 86400 ? .urgent : (left < 7 * 86400 ? .soon : .normal)
+    }
+    var color: Color {
+        switch urgency {
+        case .normal: return provider == .claude ? Palette.claudeAccent : Palette.codexAccent
+        case .soon: return .orange
+        case .urgent: return .red
+        }
+    }
+    /// "あと3日" / "あと5時間", shown once the deadline is near.
+    var remainingText: String? {
+        guard urgency != .normal, let e = nextExpiry else { return nil }
+        let hours = Int(e.timeIntervalSince(now) / 3600)
+        return hours >= 24 ? "あと\(hours / 24)日" : "あと\(max(hours, 1))時間"
+    }
+}
+
+/// 🎫 and the count of free resets, beside the character. Turns orange, then red, as one nears expiry.
+struct TicketBadge: View {
+    var tickets: ResetTickets
+    var compact = false
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("🎫").font(.system(size: compact ? 9 : 11))
+            Text("\(tickets.count)")
+                .font(.system(size: compact ? 8.5 : 10, weight: .bold, design: .rounded))
+                .monospacedDigit()
+            if let t = tickets.remainingText {
+                Text(t).font(.system(size: compact ? 7.5 : 8.5, weight: .semibold))
+            }
+        }
+        .foregroundStyle(tickets.urgency == .normal ? Color.secondary : tickets.color)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1.5)
+        .background(Capsule().fill(tickets.color.opacity(tickets.urgency == .normal ? 0.12 : 0.2)))
+        .fixedSize()
+    }
 }
 
 // MARK: - Building blocks
@@ -348,18 +404,20 @@ struct StatusBadge: View {
     }
 }
 
+final class SpinState: ObservableObject { @Published var on = false }
+
 struct Spinner: View {
     var size: CGFloat = 10
-    @State private var spinning = false
+    @StateObject private var spin = SpinState()   // not @State: see LoginItemState
 
     var body: some View {
         Circle()
             .trim(from: 0.12, to: 0.88)
             .stroke(.secondary, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
             .frame(width: size, height: size)
-            .rotationEffect(.degrees(spinning ? 360 : 0))
-            .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spinning)
-            .onAppear { spinning = true }
+            .rotationEffect(.degrees(spin.on ? 360 : 0))
+            .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spin.on)
+            .onAppear { spin.on = true }
     }
 }
 
@@ -635,15 +693,27 @@ struct ProviderExtras: View {
                 Hairline()
                 CreditView(credit: c)
             }
-            if let n = s.resetCredits, n > 0 {
+            if let t = p.tickets {
                 Hairline()
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.counterclockwise.circle.fill").foregroundStyle(Palette.codexAccent)
-                    Text("無料リセット").foregroundStyle(.secondary)
-                    Spacer()
-                    Text("あと \(n) 回使えます").monospacedDigit()
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.counterclockwise.circle.fill")
+                            .foregroundStyle(t.provider == .claude ? Palette.claudeAccent : Palette.codexAccent)
+                        Text("無料リセット").foregroundStyle(.secondary)
+                        Spacer()
+                        Text("あと \(t.count) 回使えます").monospacedDigit()
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    if let e = t.nextExpiry {
+                        HStack(spacing: 4) {
+                            if t.urgency != .normal { Image(systemName: "exclamationmark.circle.fill") }
+                            Text("次の期限 \(Fmt.format(e, "M/d H:mm"))\(t.remainingText.map { "（\($0)）" } ?? "")")
+                        }
+                        .font(.system(size: 10, weight: t.urgency == .normal ? .regular : .semibold))
+                        .foregroundStyle(t.urgency == .normal ? Color.secondary : t.color)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
                 }
-                .font(.system(size: 11, weight: .semibold))
             }
         }
     }
@@ -842,7 +912,14 @@ extension UsageStore {
     func states(_ settings: Settings, providers: [Provider]? = nil) -> [ProviderState] {
         (providers ?? settings.providerSelection.providers).map { p in
             let st = self[p]
-            return ProviderState(provider: p, snapshot: st.snapshot, error: st.error, loading: st.loading,
+            var snapshot = st.snapshot
+            if p == .claude {
+                // Claude's resets come from the panel, not the API.
+                let live = settings.claudeResets.filter { $0 > now }
+                snapshot?.resetCredits = live.count
+                snapshot?.resetCreditExpiries = live
+            }
+            return ProviderState(provider: p, snapshot: snapshot, error: st.error, loading: st.loading,
                                  stale: isStale(p), now: now, mode: settings.displayMode, colorMode: settings.colorMode,
                                  softError: st.softError)
         }
@@ -863,14 +940,17 @@ struct WidgetRoot: View {
         Group {
             if abs(settings.widgetZoom - 1) < 0.001 { contents } else { contents.magnified(settings.widgetZoom) }
         }
-        // A grip in the corner, shown on hover, says the widget can be resized by dragging.
-        .overlay(alignment: .bottomTrailing) {
-            ResizeGrip()
-                .frame(width: 11, height: 11)
-                .padding(9 * max(1, settings.widgetZoom * 0.9))
-                .opacity(hover.hovering || hover.resizing ? 1 : 0)
-                .animation(.easeOut(duration: 0.15), value: hover.hovering)
-        }
+        // Grips in both bottom corners, shown on hover, say the widget can be resized by dragging.
+        .overlay(alignment: .bottomTrailing) { grip }
+        .overlay(alignment: .bottomLeading) { grip.scaleEffect(x: -1) }
+    }
+
+    private var grip: some View {
+        ResizeGrip()
+            .frame(width: 11, height: 11)
+            .padding(9 * max(1, settings.widgetZoom * 0.9))
+            .opacity(hover.hovering || hover.resizing ? 1 : 0)
+            .animation(.easeOut(duration: 0.15), value: hover.hovering)
     }
 }
 
@@ -902,6 +982,10 @@ struct WidgetContents: View {
         Dictionary(uniqueKeysWithValues: items.map { ($0.provider, CharacterTint.for($0, option: characterColor)) })
     }
 
+    private var tickets: [Provider: ResetTickets] {
+        Dictionary(uniqueKeysWithValues: items.compactMap { p in p.tickets.map { (p.provider, $0) } })
+    }
+
     private var width: CGFloat { size == .small ? 164 : (size == .large ? 344 * WidgetSize.largeScale : 344) }
 
     var body: some View {
@@ -910,11 +994,11 @@ struct WidgetContents: View {
             if let workStates {
                 if size == .large {
                     WorkSceneFooter(providers: items.map(\.provider), states: workStates, tints: tints,
-                                    style: sceneStyle, previewDate: previewDate)
+                                    style: sceneStyle, previewDate: previewDate, tickets: tickets)
                         .frame(width: 344).magnified(WidgetSize.largeScale)
                 } else {
                     WorkSceneFooter(providers: items.map(\.provider), states: workStates, tints: tints,
-                                    style: sceneStyle, compact: size == .small, previewDate: previewDate)
+                                    style: sceneStyle, compact: size == .small, previewDate: previewDate, tickets: tickets)
                 }
             }
         }
