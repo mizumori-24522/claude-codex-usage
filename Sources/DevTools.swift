@@ -273,6 +273,20 @@ enum DevTools {
         }
         .padding(12).background(Color(hex: 0x22242A)).environment(\.colorScheme, .dark)
         write(styles, scale: 2, to: url.appendingPathComponent("styles.png"))
+        // Reset tickets as the soonest expiry nears: plenty of time, within a week, within two days.
+        let tickets = HStack(spacing: 0) {
+            ForEach([20.0, 5, 1.5], id: \.self) { days in
+                let t: (Provider) -> ResetTickets = { p in
+                    ResetTickets(provider: p, count: p == .claude ? 1 : 2, nextExpiry: now.addingTimeInterval(days * 86400), now: now)
+                }
+                WorkSceneFooter(providers: [.claude, .codex],
+                                states: [.claude: activity(.idle, since: now), .codex: activity(.idle, since: now)],
+                                previewDate: now, tickets: [.claude: t(.claude), .codex: t(.codex)])
+                    .frame(width: 300)
+            }
+        }
+        .padding(12).background(Color(hex: 0x22242A)).environment(\.colorScheme, .dark)
+        write(tickets, scale: 2, to: url.appendingPathComponent("tickets.png"))
         // An unseen completion: resting with the blue dot, then the two wave poses, in both styles.
         let waveBase = Date(timeIntervalSinceReferenceDate: floor(now.timeIntervalSinceReferenceDate / PixelWorkbench.waveCycle) * PixelWorkbench.waveCycle)
         let unseen = VStack(spacing: 0) {
