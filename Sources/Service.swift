@@ -507,6 +507,10 @@ final class Settings: ObservableObject {
     @Published var colorMode: ColorMode    { didSet { d.set(colorMode.rawValue, forKey: "colorMode") } }
     @Published var menuBarClaudeOnly: Bool { didSet { d.set(menuBarClaudeOnly, forKey: "menuBarClaudeOnly") } }
     @Published var characterColor: CharacterColor { didSet { d.set(characterColor.rawValue, forKey: "characterColor") } }
+    /// Claude's free resets, entered by hand: the usage API does not report them. Soonest first.
+    @Published var claudeResets: [Date] {
+        didSet { d.set(claudeResets.map(\.timeIntervalSince1970), forKey: "claudeResets") }
+    }
 
     /// Services the menu bar shows; Codex can still be checked in the dropdown.
     var menuBarProviders: [Provider] {
@@ -543,5 +547,8 @@ final class Settings: ObservableObject {
         colorMode = ColorMode(rawValue: d.string(forKey: "colorMode") ?? "") ?? .level
         menuBarClaudeOnly = d.bool(forKey: "menuBarClaudeOnly")
         characterColor = CharacterColor(rawValue: d.string(forKey: "characterColor") ?? "") ?? .level
+        // Expired grants drop out on launch.
+        claudeResets = ((d.array(forKey: "claudeResets") as? [Double]) ?? [])
+            .map(Date.init(timeIntervalSince1970:)).filter { $0 > Date() }.sorted()
     }
 }

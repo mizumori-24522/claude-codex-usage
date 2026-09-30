@@ -85,11 +85,17 @@ private struct UsageTab: View {
     }
 }
 
+/// View-local state kept in an object: the Command Line Tools for macOS 27 ship without
+/// SwiftUI's macro plugin, so `@State` no longer compiles there while `@StateObject` does.
+final class LoginItemState: ObservableObject {
+    @Published var enabled = SMAppService.mainApp.status == .enabled
+    @Published var error: String?
+}
+
 private struct SettingsTab: View {
     @ObservedObject var settings: Settings
     var raiseWidget: () -> Void
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var loginError: String?
+    @StateObject private var login = LoginItemState()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -114,7 +120,7 @@ private struct SettingsTab: View {
                             .disabled(abs(settings.widgetZoom - 1) < 0.001)
                     }
                 }
-                Text("ウィジェットの右下の角をドラッグしても変えられます")
+                Text("ウィジェットの右下か左下の角をドラッグしても変えられます")
                     .font(.system(size: 9.5))
                     .foregroundStyle(.tertiary)
                 Row("配置") {
@@ -166,6 +172,10 @@ private struct SettingsTab: View {
                 if settings.colorMode == .level { ColorLegend() }
             }
 
+            PanelSection("Claude の無料リセット") {
+                ClaudeResetEditor(settings: settings)
+            }
+
             PanelSection("メニューバー") {
                 Row("スタイル") {
                     Picker("", selection: $settings.menuBarMode) {
@@ -194,9 +204,9 @@ private struct SettingsTab: View {
                 }
                 Row("トークン切れを CLI で更新") { Toggle("", isOn: $settings.autoCLIRefresh).switchStyle() }
                 Row("ログイン時に起動") {
-                    Toggle("", isOn: Binding(get: { launchAtLogin }, set: setLaunchAtLogin)).switchStyle()
+                    Toggle("", isOn: Binding(get: { login.enabled }, set: setLaunchAtLogin)).switchStyle()
                 }
-                if let loginError {
+                if let loginError = login.error {
                     Text(loginError).font(.system(size: 10)).foregroundStyle(.orange)
                 }
             }
@@ -208,11 +218,11 @@ private struct SettingsTab: View {
     private func setLaunchAtLogin(_ on: Bool) {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-            loginError = nil
+            login.error = nil
         } catch {
-            loginError = "変更できませんでした。システム設定 › 一般 › ログイン項目 から追加してください。"
+            login.error = "変更できませんでした。システム設定 › 一般 › ログイン項目 から追加してください。"
         }
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+        login.enabled = SMAppService.mainApp.status == .enabled
     }
 }
 
@@ -272,6 +282,60 @@ private struct CharacterScaleEditor: View {
                     guard let i = settings.characterSteps.firstIndex(where: { $0.id == id }) else { return }
                     settings.characterSteps[i].upTo = value
                 })
+    }
+}
+
+/// The date being typed for a new Claude reset (not `@State`: see LoginItemState).
+final class ResetDraft: ObservableObject {
+    @Published var date = Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()
+}
+
+/// Claude's free resets, typed in from Claude's own usage settings; the API does not report them.
+private struct ClaudeResetEditor: View {
+    @ObservedObject var settings: Settings
+    @StateObject private var draft = ResetDraft()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if settings.claudeResets.isEmpty {
+                Text("登録なし").font(.system(size: 11)).foregroundStyle(.tertiary)
+            }
+            ForEach(settings.claudeResets, id: \.self) { date in
+                HStack(spacing: 6) {
+                    Text("🎫")
+                    Text("\(Fmt.format(date, "M/d(E)")) まで").font(.system(size: 12)).monospacedDigit()
+                    Spacer()
+                    Button {
+                        settings.claudeResets.removeAll { $0 == date }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("使った・削除")
+                }
+            }
+            HStack(spacing: 8) {
+                Text("有効期限").font(.system(size: 12))
+                DatePicker("", selection: $draft.date, in: Date()..., displayedComponents: .date)
+                    .labelsHidden()
+                    .datePickerStyle(.stepperField)
+                    .environment(\.locale, Locale(identifier: "ja_JP"))
+                Spacer()
+                Button("追加") { add() }.controlSize(.small)
+            }
+            Text("Claude アプリの「設定 → 使用量 → 上限のリセット」に出ている有効期限を入れます。使ったら × で消してください。期限を過ぎたものは自動で消えます。")
+                .font(.system(size: 9.5))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Claude shows only the day, so the grant counts as good until the end of it.
+    private func add() {
+        let cal = Calendar.current
+        let end = cal.date(bySettingHour: 23, minute: 59, second: 0, of: draft.date) ?? draft.date
+        guard end > Date() else { return }
+        settings.claudeResets = (settings.claudeResets + [end]).sorted()
     }
 }
 

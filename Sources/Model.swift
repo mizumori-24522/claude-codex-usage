@@ -47,6 +47,8 @@ struct UsageSnapshot: Codable, Equatable {
     var fetchedAt: Date
     /// Codex: free "full reset" grants still available.
     var resetCredits: Int?
+    /// Codex: when each of those grants expires, soonest first.
+    var resetCreditExpiries: [Date]?
     /// Claude: when the CLI's login runs out (refreshing does not extend it; `claude auth login` does).
     var loginExpiresAt: Date?
 }
@@ -148,6 +150,11 @@ enum CodexParser {
         var snap = UsageSnapshot(fiveHour: five, sevenDay: week, plan: planName(rl["planType"] as? String), fetchedAt: Date())
         if let rc = result["rateLimitResetCredits"] as? [String: Any], let n = UsageParser.number(rc["availableCount"]) {
             snap.resetCredits = Int(n)
+            let list = (rc["credits"] as? [[String: Any]]) ?? []
+            snap.resetCreditExpiries = list
+                .filter { ($0["status"] as? String ?? "available") == "available" }
+                .compactMap { UsageParser.number($0["expiresAt"]).map { Date(timeIntervalSince1970: $0) } }
+                .sorted()
         }
         return snap
     }
