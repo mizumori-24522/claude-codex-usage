@@ -917,7 +917,7 @@ extension UsageStore {
                 // Claude's resets come from the panel, not the API.
                 let live = settings.claudeResets.filter { $0 > now }
                 snapshot?.resetCredits = live.count
-                snapshot?.resetCreditExpiries = live
+                snapshot?.resetCreditExpiries = live.filter(Settings.hasExpiry)   // quick ＋1 entries have no deadline
             }
             return ProviderState(provider: p, snapshot: snapshot, error: st.error, loading: st.loading,
                                  stale: isStale(p), now: now, mode: settings.displayMode, colorMode: settings.colorMode,
