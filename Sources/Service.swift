@@ -512,6 +512,24 @@ final class Settings: ObservableObject {
         didSet { d.set(claudeResets.map(\.timeIntervalSince1970), forKey: "claudeResets") }
     }
 
+    /// Resets added with the quick ＋1 button have no known deadline; they are stored as dates
+    /// far in the future (one second apart so each stays distinct).
+    static let noExpiryBase = Date(timeIntervalSince1970: 4_102_444_800)   // 2100-01-01
+    static func hasExpiry(_ date: Date) -> Bool { date < noExpiryBase }
+
+    /// ＋1: one more reset whose deadline can be filled in later.
+    func addClaudeReset() {
+        var candidate = Self.noExpiryBase
+        while claudeResets.contains(candidate) { candidate = candidate.addingTimeInterval(1) }
+        claudeResets = (claudeResets + [candidate]).sorted()
+    }
+
+    /// −1: a reset was used. The one that expires soonest goes first.
+    func removeClaudeReset() {
+        guard !claudeResets.isEmpty else { return }
+        claudeResets = Array(claudeResets.sorted().dropFirst())
+    }
+
     /// Services the menu bar shows; Codex can still be checked in the dropdown.
     var menuBarProviders: [Provider] {
         menuBarMode.isCharacter || menuBarClaudeOnly ? [.claude] : providerSelection.providers

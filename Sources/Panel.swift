@@ -69,6 +69,11 @@ private struct UsageTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             LargeCard(items: store.states(settings), width: ControlPanel.width, padding: 14)
+            if settings.providerSelection.providers.contains(.claude) {
+                ClaudeTicketStepper(settings: settings)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+            }
             HStack(spacing: 8) {
                 ForEach(settings.providerSelection.providers) { p in
                     Button {
@@ -82,6 +87,33 @@ private struct UsageTab: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 12)
         }
+    }
+}
+
+/// Claude's free resets are not reported by its API, so the count is kept by hand: ＋1 when one
+/// arrives, −1 when one is used.
+private struct ClaudeTicketStepper: View {
+    @ObservedObject var settings: Settings
+
+    var body: some View {
+        let count = settings.claudeResets.filter { $0 > Date() }.count
+        HStack(spacing: 8) {
+            Text("🎫 Claude の無料リセット").font(.system(size: 11.5, weight: .medium))
+            Spacer()
+            Button { settings.removeClaudeReset() } label: { Image(systemName: "minus") }
+                .disabled(count == 0)
+                .help("1つ使った")
+            Text("\(count)")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .frame(minWidth: 18)
+            Button { settings.addClaudeReset() } label: { Image(systemName: "plus") }
+                .help("1つもらった（期限は「設定」で入れられます）")
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.primary.opacity(0.05)))
     }
 }
 
@@ -303,7 +335,9 @@ private struct ClaudeResetEditor: View {
             ForEach(settings.claudeResets, id: \.self) { date in
                 HStack(spacing: 6) {
                     Text("🎫")
-                    Text("\(Fmt.format(date, "M/d(E)")) まで").font(.system(size: 12)).monospacedDigit()
+                    Text(Settings.hasExpiry(date) ? "\(Fmt.format(date, "M/d(E)")) まで" : "期限 未入力")
+                        .font(.system(size: 12)).monospacedDigit()
+                        .foregroundStyle(Settings.hasExpiry(date) ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                     Spacer()
                     Button {
                         settings.claudeResets.removeAll { $0 == date }
@@ -322,6 +356,11 @@ private struct ClaudeResetEditor: View {
                     .environment(\.locale, Locale(identifier: "ja_JP"))
                 Spacer()
                 Button("追加") { add() }.controlSize(.small)
+            }
+            HStack(spacing: 8) {
+                Text("期限を入れずに").font(.system(size: 12))
+                Spacer()
+                Button("＋1") { settings.addClaudeReset() }.controlSize(.small)
             }
             Text("Claude アプリの「設定 → 使用量 → 上限のリセット」に出ている有効期限を入れます。使ったら × で消してください。期限を過ぎたものは自動で消えます。")
                 .font(.system(size: 9.5))
